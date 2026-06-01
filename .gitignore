@@ -1,2 +1,8 @@
 /target
 .env
+
+references/*
+
+kratt-memory/*
+
+.DS_Store
