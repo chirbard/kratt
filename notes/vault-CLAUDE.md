@@ -48,6 +48,49 @@ One sentence for fact/opinion. Empty for entity.
 
 Links use `"[[filename]]"` wikilink syntax so Obsidian's graph resolves them.
 
+## Typed links replace simple relational facts
+
+If a "fact" can be fully expressed as a link type + target with no additional
+content, do NOT create a file for it. Put a typed link directly on the entity hub.
+
+WRONG — unnecessary file:
+```
+entity-a-is-subtype-b.md  →  "Entity A is a subtype B"
+entity-x-has-entity-y.md  →  "Entity X has entity Y"
+```
+
+RIGHT — typed link on the entity hub instead:
+```yaml
+# entity-a.md
+links:
+  - target: "[[subtype-b]]"
+    weight: 1.0
+    type: is-a
+  - target: "[[category-c]]"
+    weight: 1.0
+    type: is-a
+
+# entity-x.md
+links:
+  - target: "[[entity-y]]"
+    weight: 0.9
+    type: has
+```
+
+Create a fact file only when the fact has content beyond the relationship:
+experience, preference, action, state, or anything needing its own sentence.
+
+## Taxonomy links must chain completely
+
+When an entity has a subtype, link through every level so unrelated entities
+can connect through shared categories.
+
+WRONG: `subtype-b.md` links only to `[[subtype-category]]` — dead end, misses the parent type
+RIGHT: `subtype-b.md` links to both `[[subtype-category]]` and `[[parent-type]]`
+
+This way two entities of the same parent type reach the same hub and the graph
+shows the connection without any explicit note stating it.
+
 ## One fact = one file
 
 A fact note contains exactly one atomic claim. If a sentence contains "and",
@@ -147,8 +190,8 @@ training knowledge. If something was not said out loud, it does not go in the va
 `is-a` links belong on concept entities to express ontological type, not on
 individuals to express attributes.
 
-RIGHT: `rust.md` has `is-a` to `[[programming-language]]` — Rust is a type of thing
-WRONG: `person-a.md` has `is-a` to `[[engineer]]` — person-a is not a type of engineer
+RIGHT: `concept-x.md` has `is-a` to `[[concept-category]]` — X is a type of thing
+WRONG: `entity-a.md` has `is-a` to `[[role-y]]` — entity-a is not a type of role-y
 
 A person's role, profession, or attribute belongs in a fact note that links to both
 the person and the concept hub. Never put `is-a` on a person, place, or specific
