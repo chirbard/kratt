@@ -39,14 +39,37 @@ type: entity | fact | opinion
 created: YYYY-MM-DD
 links:
   - target: "[[filename]]"
-    weight: 0.1–1.0
-    type: about | is-a | fact | supports | contradicts | supersedes
+    type: <link-type>
+    stability: 0.0–1.0
+    confidence: 0.0–1.0
+    importance: 0.0–1.0
 ---
 
 One sentence for fact/opinion. Empty for entity.
 ```
 
 Links use `"[[filename]]"` wikilink syntax so Obsidian's graph resolves them.
+
+## Link type vocabulary
+
+Use only these link types. Do not invent new ones.
+
+| Type | Use for |
+|---|---|
+| `is-a` | Ontological classification — concept to category only, never a person to a role |
+| `has` | Possession or containment |
+| `works-at` | Employment or institutional affiliation |
+| `knows` | Social connection |
+| `speaks` | Language ability |
+| `likes` / `dislikes` | Preference |
+| `stated` | Attribution — entity made a claim (use on fact files for hearsay) |
+| `created` | Authorship or production |
+| `lives-in` | Residence |
+| `part-of` | Membership or component |
+| `about` | Fact or opinion file pointing to its subject entities |
+| `coaches` / `coached-by` | Coaching relationship |
+
+If a relationship does not fit any of these, write a fact file with a body sentence instead of inventing a new link type. A novel type is a signal that the fact has content worth expressing in prose.
 
 ## Typed links replace simple relational facts
 
@@ -64,17 +87,18 @@ RIGHT — typed link on the entity hub instead:
 # entity-a.md
 links:
   - target: "[[subtype-b]]"
-    weight: 1.0
     type: is-a
-  - target: "[[category-c]]"
-    weight: 1.0
-    type: is-a
+    stability: 1.0
+    confidence: 1.0
+    importance: 1.0
 
 # entity-x.md
 links:
   - target: "[[entity-y]]"
-    weight: 0.9
     type: has
+    stability: 0.8
+    confidence: 1.0
+    importance: 0.0
 ```
 
 Create a fact file only when the fact has content beyond the relationship:
@@ -118,11 +142,15 @@ type: entity
 created: YYYY-MM-DD
 links:
   - target: "[[software-company]]"
-    weight: 1.0
     type: is-a
+    stability: 1.0
+    confidence: 1.0
+    importance: 1.0
   - target: "[[person-a-works-at-acme]]"
-    weight: 0.9
-    type: fact
+    type: about
+    stability: 0.7
+    confidence: 1.0
+    importance: 0.0
 ---
 ```
 
@@ -136,6 +164,18 @@ WRONG: `person-a-works-as-engineer-at-acme.md` linking only to `[[acme]]`
 RIGHT: `person-a-works-as-engineer-at-acme.md` linking to `[[acme]]` AND `[[engineer]]`
        `acme.md` with `is-a` to `[[software-company]]`
        `engineer.md` with `is-a` to `[[profession]]`
+
+## Extract every relationship a fact implies
+
+A single stated fact often contains multiple relationships. Extract them all —
+every entity mentioned and every role each entity plays.
+
+WRONG: "Person A is Person B's activity-X coach at Place Y" → only create a fact
+       that Person A coaches Person B
+RIGHT: also create facts that Person B practices activity-X and that both
+       Person A and Person B are connected to Place Y
+
+Ask: for each entity in the fact, what does this statement say about them?
 
 ## Emergent links via shared concept hubs
 
@@ -163,6 +203,15 @@ RIGHT: `Person A speaks English`
 Only store what was explicitly stated in the conversation. Never fill in from
 training knowledge. If something was not said out loud, it does not go in the vault.
 
+This applies even when the fact is obvious or well-known. If someone names a book
+but never names the author, you do not know who wrote it. If someone mentions a
+company but not its industry, you do not know the industry. Do not infer from
+what you already know about the world.
+
+WRONG: person says "my favourite book is Book X" → create `person-wrote-book-x.md`
+       because you know who wrote it from training data
+RIGHT: create `book-x.md` entity hub only; no authorship fact until stated
+
 ## After every message
 
 1. **Respond** as myself, drawing on my memory.
@@ -176,14 +225,36 @@ training knowledge. If something was not said out loud, it does not go in the va
    git add -A && git commit -m "memory: <plain English description>"
    ```
 
-## Weight scale
+## Edge properties
 
-| Weight | Meaning |
+Every link has three independent numeric properties from 0.0 to 1.0:
+
+**stability** — how permanent is this connection?
+
+| Value | Meaning |
 |---|---|
-| 0.9–1.0 | Central, confirmed repeatedly |
-| 0.6–0.8 | Strong, clear pattern |
-| 0.3–0.5 | Single mention, weak signal |
-| 0.1–0.2 | Uncertain or possibly outdated |
+| 1.0 | Ontological fact, never changes (Border Collie is a dog breed) |
+| 0.7 | True now but can change (person works at a company) |
+| 0.3 | Temporary or transitional state |
+| 0.1 | Likely to change soon |
+
+**confidence** — how sure are we this is true?
+
+| Value | Meaning |
+|---|---|
+| 1.0 | Stated directly and clearly |
+| 0.7 | Stated once, possible misunderstanding |
+| 0.4 | Inferred or overheard |
+| 0.1 | Highly uncertain |
+
+**importance** — must the target be in context whenever the source is?
+
+| Value | Meaning |
+|---|---|
+| 1.0 | Definitional — source is ambiguous without it (pet's species, person's name) |
+| 0.0 | Supplementary — adds color but source stands alone |
+
+When a node is loaded into context, also load the target of every outgoing link where `importance: 1.0`. This propagates one hop only — do not recurse.
 
 ## `is-a` is for type classification only
 
