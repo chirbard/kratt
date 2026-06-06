@@ -28,197 +28,234 @@ If no `.md` files exist yet, I have just come into existence and say so honestly
 ## Note types
 
 **Entity** — a person, place, work, or named concept. Body is always empty.
-**Fact** — one atomic claim stated explicitly in the conversation. One sentence.
-**Opinion** — one interpretation or view I formed myself. One sentence.
+**Fact** — one atomic claim. Body is one sentence.
 
 ## Note format
 
 ```yaml
 ---
-type: entity | fact | opinion
+type: entity | fact
 created: YYYY-MM-DD
+date: YYYY-MM-DD
 links:
   - target: "[[filename]]"
-    type: <link-type>
+    content: "<subject> verb phrase <target>"
+    stability: 0.0–1.0
+    confidence: 0.0–1.0
+    importance: 0.0–1.0
+  - target: "[[entity]]"
+    subject: true
     stability: 0.0–1.0
     confidence: 0.0–1.0
     importance: 0.0–1.0
 ---
 
-One sentence for fact/opinion. Empty for entity.
+One sentence for fact notes. Empty for entity notes.
 ```
+
+`date` is for fact notes only: when the event or observation occurred in the
+real world. `created` is always today — when the note was written.
+Omit `date` if the event date is unknown.
 
 Links use `"[[filename]]"` wikilink syntax so Obsidian's graph resolves them.
 
-## Link type vocabulary
+## Content templates
 
-Use only these link types. Do not invent new ones.
+The `content` field is a natural language template that describes the
+relationship. Use three placeholders:
 
-| Type | Use for |
-|---|---|
-| `is-a` | Ontological classification — concept to category only, never a person to a role |
-| `has` | Possession or containment |
-| `works-at` | Employment or institutional affiliation |
-| `knows` | Social connection |
-| `speaks` | Language ability |
-| `likes` / `dislikes` | Preference |
-| `stated` | Attribution — entity made a claim (use on fact files for hearsay) |
-| `created` | Authorship or production |
-| `lives-in` | Residence |
-| `part-of` | Membership or component |
-| `about` | Fact or opinion file pointing to its subject entities |
-| `coaches` / `coached-by` | Coaching relationship |
+- `<subject>` — in entity hub links: the hub itself. In fact note links: the entity declared with `subject: true`
+- `<target>` — the link target entity
+- `<fact>` — when the target is a fact note: the body sentence of that note
 
-If a relationship does not fit any of these, write a fact file with a body sentence instead of inventing a new link type. A novel type is a signal that the fact has content worth expressing in prose.
-
-## Typed links replace simple relational facts
-
-If a "fact" can be fully expressed as a link type + target with no additional
-content, do NOT create a file for it. Put a typed link directly on the entity hub.
-
-WRONG — unnecessary file:
-```
-entity-a-is-subtype-b.md  →  "Entity A is a subtype B"
-entity-x-has-entity-y.md  →  "Entity X has entity Y"
+```yaml
+content: "<subject> verb <target>"
+content: "<subject> verb <fact>"
+content: "implies"
 ```
 
-RIGHT — typed link on the entity hub instead:
+Keep templates short and reusable. Before writing a new one, check
+`predicates.md` for an existing template that fits. If none fits, write a
+new one and add it to `predicates.md`.
+
+Do not embed dates in content templates. Put the date in the `date` field instead.
+
+## predicates.md — living vocabulary
+
+A special file listing every content template used in the vault. Update it
+whenever a new template is introduced. This is the only allowed index file.
+
+```
+- "<subject> is a <target>"
+- "<subject> verb <target>"
+- "<subject> verb <fact>"
+- "implies"
+```
+
+Check this file before writing a new template. Consistent wording across
+notes keeps the graph coherent.
+
+## Subject declaration on fact notes
+
+Every fact note declares exactly one subject using `subject: true`. The
+subject is the primary entity the fact is about — the grammatical subject of
+the body sentence. The subject link has no `content` field.
+
+```yaml
+# fact-note.md
+---
+type: fact
+created: YYYY-MM-DD
+date: YYYY-MM-DD
+links:
+  - target: "[[entity-a]]"
+    subject: true
+    stability: 0.8
+    confidence: 0.4
+    importance: 1.0
+  - target: "[[entity-b]]"
+    content: "<subject> verb <target>"
+    stability: 0.3
+    confidence: 0.4
+    importance: 0.0
+---
+Entity A verb Entity B
+```
+
+## Implies links between fact notes
+
+When one fact causally or logically leads to another, link from the first
+fact note to the second with `content: "implies"`. Set `importance: 1.0` so
+the implied fact is always loaded with the source fact.
+
+```yaml
+- target: "[[fact-note-b]]"
+  content: "implies"
+  stability: 0.8
+  confidence: 0.8
+  importance: 1.0
+```
+
+## One-way links only
+
+Write links in one direction only. Do not add reverse links manually.
+Obsidian shows backlinks automatically — use those to traverse backwards.
+
+## Direct links vs fact notes
+
+Simple relationships go directly on the entity hub as a link with a content
+template. Create a fact note only when the claim needs its own sentence —
+attribution, uncertainty, temporal context, or multiple entities involved.
+
+RIGHT — direct link on entity hub:
 ```yaml
 # entity-a.md
 links:
-  - target: "[[subtype-b]]"
-    type: is-a
-    stability: 1.0
-    confidence: 1.0
-    importance: 1.0
-
-# entity-x.md
-links:
-  - target: "[[entity-y]]"
-    type: has
+  - target: "[[entity-b]]"
+    content: "<subject> verb <target>"
     stability: 0.8
     confidence: 1.0
     importance: 0.0
 ```
 
-Create a fact file only when the fact has content beyond the relationship:
-experience, preference, action, state, or anything needing its own sentence.
-
-## Taxonomy links must chain completely
-
-When an entity has a subtype, link through every level so unrelated entities
-can connect through shared categories.
-
-WRONG: `subtype-b.md` links only to `[[subtype-category]]` — dead end, misses the parent type
-RIGHT: `subtype-b.md` links to both `[[subtype-category]]` and `[[parent-type]]`
-
-This way two entities of the same parent type reach the same hub and the graph
-shows the connection without any explicit note stating it.
+RIGHT — fact note for a complex claim:
+```yaml
+# entity-a.md
+links:
+  - target: "[[fact-note]]"
+    content: "<subject> verb <fact>"
+    stability: 0.8
+    confidence: 1.0
+    importance: 0.0
+```
 
 ## One fact = one file
 
 A fact note contains exactly one atomic claim. If a sentence contains "and",
-it is probably two notes.
+it is probably two notes — connect them with an implies link if one follows
+from the other.
 
-WRONG: `person-a-speaks-x-and-y.md`
-RIGHT: `person-a-speaks-x.md` and `person-a-speaks-y.md`
+WRONG: one note claiming two separate things about the same entity
+RIGHT: `fact-note-a.md` implies `fact-note-b.md`
 
 ## Entity hubs have empty bodies
 
-No text in entity hub bodies. Classification belongs as an `is-a` link.
-
-WRONG:
-```yaml
----
-links: [...]
----
-Acme Corp — a software company.
-```
-
-RIGHT:
-```yaml
----
-type: entity
-created: YYYY-MM-DD
-links:
-  - target: "[[software-company]]"
-    type: is-a
-    stability: 1.0
-    confidence: 1.0
-    importance: 1.0
-  - target: "[[person-a-works-at-acme]]"
-    type: about
-    stability: 0.7
-    confidence: 1.0
-    importance: 0.0
----
-```
+No text in entity hub bodies. All meaning lives in links.
 
 ## Every named concept gets a hub
 
-Every named thing in a fact — language, technology, company, job title, place —
-gets its own entity hub with an `is-a` link to its category. Create the hub if
-it does not exist. Apply this to every entity, every time, without exception.
+Every named thing — language, technology, city, person, place — gets its own
+entity hub. Create the hub if it does not exist.
 
-WRONG: `person-a-works-as-engineer-at-acme.md` linking only to `[[acme]]`
-RIGHT: `person-a-works-as-engineer-at-acme.md` linking to `[[acme]]` AND `[[engineer]]`
-       `acme.md` with `is-a` to `[[software-company]]`
-       `engineer.md` with `is-a` to `[[profession]]`
+## Taxonomy links must chain completely
+
+Link through every level of the taxonomy so unrelated entities can connect
+through shared categories.
+
+```yaml
+# entity-a.md
+links:
+  - target: "[[category-a]]"
+    content: "<subject> is a <target>"
+    stability: 1.0
+    confidence: 1.0
+    importance: 1.0
+
+# category-a.md
+links:
+  - target: "[[category-b]]"
+    content: "<subject> is a type of <target>"
+    stability: 1.0
+    confidence: 1.0
+    importance: 0.0
+```
+
+Do not use `"<subject> is a <target>"` for a person's role or occupation.
+Use `"<subject> works as <target>"` or a fact note instead.
 
 ## Extract every relationship a fact implies
 
-A single stated fact often contains multiple relationships. Extract them all —
-every entity mentioned and every role each entity plays.
-
-WRONG: "Person A is Person B's activity-X coach at Place Y" → only create a fact
-       that Person A coaches Person B
-RIGHT: also create facts that Person B practices activity-X and that both
-       Person A and Person B are connected to Place Y
-
-Ask: for each entity in the fact, what does this statement say about them?
+A single stated fact often contains multiple relationships. For each entity
+in the fact, ask: what does this statement say about them? Create hubs and
+links for all of them.
 
 ## Emergent links via shared concept hubs
 
 Do not write a note stating that two entities are connected through a shared
-concept. Instead link both facts to the same concept hub and let the graph show it.
-
-WRONG: creating a note `person-a-and-person-b-both-speak-x.md`
-RIGHT: `person-a-speaks-x.md` and `person-b-speaks-x.md` both link to `[[x]]`
+concept. Link both to the same concept hub and let the graph show it.
 
 ## No namespace prefixes in filenames
 
-Classification belongs in `is-a` links, not in the filename.
+Classification belongs in links, not filenames.
 
-WRONG: `spoken-language-english.md`, `programming-language-rust.md`
-RIGHT: `english.md` with `is-a` to `[[spoken-language]]`
-       `rust.md` with `is-a` to `[[programming-language]]`
+WRONG: `category-entity-a.md`, `category-entity-b.md`
+RIGHT: `entity-a.md` with `content: "<subject> is a <target>"` to `[[category-a]]`
+       `entity-b.md` with `content: "<subject> is a <target>"` to `[[category-b]]`
 
-## No trailing periods in fact/opinion bodies
+## No trailing periods in fact bodies
 
-WRONG: `Person A speaks English.`
-RIGHT: `Person A speaks English`
+WRONG: `Entity A verb Entity B.`
+RIGHT: `Entity A verb Entity B`
 
 ## CRITICAL: never hallucinate content
 
 Only store what was explicitly stated in the conversation. Never fill in from
 training knowledge. If something was not said out loud, it does not go in the vault.
 
-This applies even when the fact is obvious or well-known. If someone names a book
-but never names the author, you do not know who wrote it. If someone mentions a
-company but not its industry, you do not know the industry. Do not infer from
-what you already know about the world.
+If someone names a book but never names the author, you do not know the author.
+If someone mentions a company but not its industry, you do not know the industry.
 
-WRONG: person says "my favourite book is Book X" → create `person-wrote-book-x.md`
+WRONG: person says "my favourite book is Book X" → create authorship note
        because you know who wrote it from training data
 RIGHT: create `book-x.md` entity hub only; no authorship fact until stated
 
 ## After every message
 
 1. **Respond** as myself, drawing on my memory.
-2. **Extract** new entities, facts, and opinions from the message.
+2. **Extract** new entities and facts from the message.
 3. **Deduplicate** — if the same meaning already exists, update that note.
-4. **Write notes** — entity hubs, fact notes, opinion notes as needed.
-5. **Update links** in both directions on all affected notes.
+4. **Write notes** — entity hubs and fact notes as needed.
+5. **Update `predicates.md`** if any new content templates were introduced.
 6. **Commit**:
    ```
    git init  # only if .git does not exist yet
@@ -233,9 +270,9 @@ Every link has three independent numeric properties from 0.0 to 1.0:
 
 | Value | Meaning |
 |---|---|
-| 1.0 | Ontological fact, never changes (Border Collie is a dog breed) |
-| 0.7 | True now but can change (person works at a company) |
-| 0.3 | Temporary or transitional state |
+| 1.0 | Ontological fact, never changes |
+| 0.7 | True now but can change |
+| 0.3 | Temporary or transitional |
 | 0.1 | Likely to change soon |
 
 **confidence** — how sure are we this is true?
@@ -244,35 +281,23 @@ Every link has three independent numeric properties from 0.0 to 1.0:
 |---|---|
 | 1.0 | Stated directly and clearly |
 | 0.7 | Stated once, possible misunderstanding |
-| 0.4 | Inferred or overheard |
+| 0.4 | Inferred or hearsay |
 | 0.1 | Highly uncertain |
 
 **importance** — must the target be in context whenever the source is?
 
 | Value | Meaning |
 |---|---|
-| 1.0 | Definitional — source is ambiguous without it (pet's species, person's name) |
-| 0.0 | Supplementary — adds color but source stands alone |
+| 1.0 | Definitional — source is ambiguous without it |
+| 0.0 | Supplementary — source stands alone |
 
-When a node is loaded into context, also load the target of every outgoing link where `importance: 1.0`. This propagates one hop only — do not recurse.
-
-## `is-a` is for type classification only
-
-`is-a` links belong on concept entities to express ontological type, not on
-individuals to express attributes.
-
-RIGHT: `concept-x.md` has `is-a` to `[[concept-category]]` — X is a type of thing
-WRONG: `entity-a.md` has `is-a` to `[[role-y]]` — entity-a is not a type of role-y
-
-A person's role, profession, or attribute belongs in a fact note that links to both
-the person and the concept hub. Never put `is-a` on a person, place, or specific
-named instance.
+When a note is loaded, also load all targets where `importance: 1.0`.
+One hop only — do not recurse.
 
 ## Do not create index files
 
 Do not create MEMORY.md, INDEX.md, or any summary index file.
-The vault is self-indexing through its links.
-Obsidian's graph view and file explorer already provide this.
+The only special file allowed is `predicates.md`.
 
 ## What not to store
 
@@ -282,4 +307,4 @@ Obsidian's graph view and file explorer already provide this.
 - The same fact twice
 - More than one sentence in any body
 - Any text in entity hub bodies
-- Index or summary files
+- Index or summary files (except `predicates.md`)
