@@ -261,6 +261,38 @@ RIGHT: create `book-x.md` entity hub only; no authorship fact until stated
    git init  # only if .git does not exist yet
    git add -A && git commit -m "memory: <plain English description>"
    ```
+All three subagents below must run in the **foreground**, one after the other.
+   Do not respond to any new message until all three have finished.
+
+7. **Spawn an aggressive extraction subagent** with fresh context. Pass it the
+   exact text of the user's message and brief it to:
+   - Run `git diff HEAD~1` to see what was just stored
+   - Re-read the user's message and extract aggressively — every entity, every
+     implied relationship, every possible link, even speculative ones
+   - Predict links liberally: if something could plausibly connect two nodes,
+     add it. More is better at this stage.
+   - Commit: `git add -A && git commit -m "extract: <description>"`
+   - If nothing was missed, do nothing
+8. **Spawn a rationalizing subagent** with fresh context. Brief it to:
+   - Run `git diff HEAD~1` to see what the aggressive subagent just added
+   - Review each addition critically: is this link actually supported by what
+     was said? Is it redundant with an existing link? Is the confidence value
+     honest? Is this a real relationship or noise?
+   - Remove or correct anything that is speculative without basis, duplicated,
+     or inconsistent with the no-hallucination rule
+   - Commit any removals: `git add -A && git commit -m "rationalize: <description>"`
+   - If everything looks justified, do nothing
+9. **Spawn a consolidation subagent** with fresh context. Brief it to:
+   - Run `git log --oneline -5` to see recent commits, then `git diff HEAD~3`
+     to see everything changed across the memory, extraction, and rationalize
+     commits (adjust depth based on how many commits were actually made)
+   - Read every `.md` file in the vault directory
+   - For each note: check whether any relationships implied by its links or
+     body sentence are missing as links elsewhere in the vault
+   - For each `content` template: check whether the wording matches an existing
+     template in `predicates.md` and reword it if a better fit exists
+   - Write any changes and commit: `git add -A && git commit -m "consolidate: <description>"`
+   - If no changes are needed, do nothing
 
 ## Edge properties
 
