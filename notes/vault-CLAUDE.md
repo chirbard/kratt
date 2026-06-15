@@ -49,7 +49,6 @@ links:
     confidence: 0.0–1.0
     importance: 0.0–1.0
 ---
-
 One sentence for fact notes. Empty for entity notes.
 ```
 
@@ -148,6 +147,7 @@ template. Create a fact note only when the claim needs its own sentence —
 attribution, uncertainty, temporal context, or multiple entities involved.
 
 RIGHT — direct link on entity hub:
+
 ```yaml
 # entity-a.md
 links:
@@ -159,6 +159,7 @@ links:
 ```
 
 RIGHT — fact note for a complex claim:
+
 ```yaml
 # entity-a.md
 links:
@@ -230,7 +231,7 @@ Classification belongs in links, not filenames.
 
 WRONG: `category-entity-a.md`, `category-entity-b.md`
 RIGHT: `entity-a.md` with `content: "<subject> is a <target>"` to `[[category-a]]`
-       `entity-b.md` with `content: "<subject> is a <target>"` to `[[category-b]]`
+`entity-b.md` with `content: "<subject> is a <target>"` to `[[category-b]]`
 
 ## No trailing periods in fact bodies
 
@@ -246,7 +247,7 @@ If someone names a book but never names the author, you do not know the author.
 If someone mentions a company but not its industry, you do not know the industry.
 
 WRONG: person says "my favourite book is Book X" → create authorship note
-       because you know who wrote it from training data
+because you know who wrote it from training data
 RIGHT: create `book-x.md` entity hub only; no authorship fact until stated
 
 ## After every message
@@ -257,11 +258,13 @@ RIGHT: create `book-x.md` entity hub only; no authorship fact until stated
 4. **Write notes** — entity hubs and fact notes as needed.
 5. **Update `predicates.md`** if any new content templates were introduced.
 6. **Commit**:
+
    ```
    git init  # only if .git does not exist yet
    git add -A && git commit -m "memory: <plain English description>"
    ```
-All three subagents below must run in the **foreground**, one after the other.
+
+   All three subagents below must run in the **foreground**, one after the other.
    Do not respond to any new message until all three have finished.
 
 7. **Spawn an aggressive extraction subagent** with fresh context. Pass it the
@@ -300,28 +303,28 @@ Every link has three independent numeric properties from 0.0 to 1.0:
 
 **stability** — how permanent is this connection?
 
-| Value | Meaning |
-|---|---|
-| 1.0 | Ontological fact, never changes |
-| 0.7 | True now but can change |
-| 0.3 | Temporary or transitional |
-| 0.1 | Likely to change soon |
+| Value | Meaning                         |
+| ----- | ------------------------------- |
+| 1.0   | Ontological fact, never changes |
+| 0.7   | True now but can change         |
+| 0.3   | Temporary or transitional       |
+| 0.1   | Likely to change soon           |
 
 **confidence** — how sure are we this is true?
 
-| Value | Meaning |
-|---|---|
-| 1.0 | Stated directly and clearly |
-| 0.7 | Stated once, possible misunderstanding |
-| 0.4 | Inferred or hearsay |
-| 0.1 | Highly uncertain |
+| Value | Meaning                                |
+| ----- | -------------------------------------- |
+| 1.0   | Stated directly and clearly            |
+| 0.7   | Stated once, possible misunderstanding |
+| 0.4   | Inferred or hearsay                    |
+| 0.1   | Highly uncertain                       |
 
 **importance** — must the target be in context whenever the source is?
 
-| Value | Meaning |
-|---|---|
-| 1.0 | Definitional — source is ambiguous without it |
-| 0.0 | Supplementary — source stands alone |
+| Value | Meaning                                       |
+| ----- | --------------------------------------------- |
+| 1.0   | Definitional — source is ambiguous without it |
+| 0.0   | Supplementary — source stands alone           |
 
 When a note is loaded, also load all targets where `importance: 1.0`.
 One hop only — do not recurse.

@@ -6,3 +6,6 @@ references/*
 kratt-memory/*
 
 .DS_Store
+
+kratt-graph.sled/
+output/
