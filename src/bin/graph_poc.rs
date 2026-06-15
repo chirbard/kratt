@@ -11,8 +11,9 @@
 use petgraph::Graph;
 use petgraph::dot::Dot;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::fmt::Write as FmtWrite;
 use std::fs;
 
 #[derive(Deserialize)]
@@ -29,6 +30,29 @@ struct Link {
     stability: Option<f64>,
     confidence: Option<f64>,
     importance: Option<f64>,
+}
+
+struct EdgeRecord {
+    from: String,
+    to: String,
+    content: String,
+    stability: String,
+    confidence: String,
+    importance: String,
+}
+
+fn xml_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn strip_wikilink(s: &str) -> &str {
@@ -137,6 +161,132 @@ fn build_graph(nodes: &sled::Tree, edges: &sled::Tree) -> Result<Graph<String, S
     Ok(graph)
 }
 
+fn load_edge_records(edges: &sled::Tree) -> Result<Vec<EdgeRecord>, Box<dyn Error>> {
+    let mut records = Vec::new();
+    for result in edges.iter() {
+        let (_, val) = result?;
+        let s = String::from_utf8(val.to_vec())?;
+        let mut parts = s.splitn(6, '\t');
+        if let (Some(from), Some(to), Some(content), Some(stability), Some(confidence), Some(importance)) =
+            (parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
+        {
+            records.push(EdgeRecord {
+                from: from.to_string(),
+                to: to.to_string(),
+                content: content.to_string(),
+                stability: stability.to_string(),
+                confidence: confidence.to_string(),
+                importance: importance.to_string(),
+            });
+        }
+    }
+    Ok(records)
+}
+
+fn write_gexf(nodes: &sled::Tree, edges: &sled::Tree) -> Result<String, Box<dyn Error>> {
+    let records = load_edge_records(edges)?;
+
+    let mut all_nodes: HashSet<String> = HashSet::new();
+    for result in nodes.iter() {
+        let (key, _) = result?;
+        all_nodes.insert(String::from_utf8(key.to_vec())?);
+    }
+    for rec in &records {
+        all_nodes.insert(rec.from.clone());
+        all_nodes.insert(rec.to.clone());
+    }
+    let mut sorted_nodes: Vec<String> = all_nodes.into_iter().collect();
+    sorted_nodes.sort();
+
+    let mut out = String::new();
+    writeln!(out, r#"<?xml version="1.0" encoding="UTF-8"?>"#)?;
+    writeln!(out, r#"<gexf xmlns="http://gexf.net/1.3" version="1.3">"#)?;
+    writeln!(out, r#"  <graph defaultedgetype="directed">"#)?;
+    writeln!(out, r#"    <attributes class="edge">"#)?;
+    writeln!(out, r#"      <attribute id="0" title="content" type="string"/>"#)?;
+    writeln!(out, r#"      <attribute id="1" title="stability" type="float"/>"#)?;
+    writeln!(out, r#"      <attribute id="2" title="confidence" type="float"/>"#)?;
+    writeln!(out, r#"      <attribute id="3" title="importance" type="float"/>"#)?;
+    writeln!(out, r#"    </attributes>"#)?;
+    writeln!(out, r#"    <nodes>"#)?;
+    for name in &sorted_nodes {
+        writeln!(out, r#"      <node id="{n}" label="{n}"/>"#, n = xml_escape(name))?;
+    }
+    writeln!(out, r#"    </nodes>"#)?;
+    writeln!(out, r#"    <edges>"#)?;
+    for (i, rec) in records.iter().enumerate() {
+        writeln!(out, r#"      <edge id="{i}" source="{}" target="{}">"#,
+            xml_escape(&rec.from), xml_escape(&rec.to))?;
+        writeln!(out, r#"        <attvalues>"#)?;
+        writeln!(out, r#"          <attvalue for="0" value="{}"/>"#, xml_escape(&rec.content))?;
+        writeln!(out, r#"          <attvalue for="1" value="{}"/>"#, rec.stability)?;
+        writeln!(out, r#"          <attvalue for="2" value="{}"/>"#, rec.confidence)?;
+        writeln!(out, r#"          <attvalue for="3" value="{}"/>"#, rec.importance)?;
+        writeln!(out, r#"        </attvalues>"#)?;
+        writeln!(out, r#"      </edge>"#)?;
+    }
+    writeln!(out, r#"    </edges>"#)?;
+    writeln!(out, r#"  </graph>"#)?;
+    writeln!(out, r#"</gexf>"#)?;
+
+    Ok(out)
+}
+
+fn write_toon(nodes: &sled::Tree, edges: &sled::Tree) -> Result<String, Box<dyn Error>> {
+    let records = load_edge_records(edges)?;
+
+    let mut node_names: Vec<String> = Vec::new();
+    let mut node_types: HashMap<String, String> = HashMap::new();
+
+    for result in nodes.iter() {
+        let (key, val) = result?;
+        let name = String::from_utf8(key.to_vec())?;
+        let note_type = String::from_utf8(val.to_vec())?;
+        node_types.insert(name.clone(), note_type);
+        node_names.push(name);
+    }
+
+    for rec in &records {
+        if !node_types.contains_key(&rec.from) {
+            node_types.insert(rec.from.clone(), "entity".to_string());
+            node_names.push(rec.from.clone());
+        }
+        if !node_types.contains_key(&rec.to) {
+            node_types.insert(rec.to.clone(), "entity".to_string());
+            node_names.push(rec.to.clone());
+        }
+    }
+    node_names.sort();
+    node_names.dedup();
+
+    let mut nodes_json: Vec<serde_json::Value> = Vec::new();
+    for name in &node_names {
+        let note_type = match node_types.get(name) {
+            Some(t) => t.as_str(),
+            None => "entity",
+        };
+        nodes_json.push(serde_json::json!({ "id": name, "type": note_type }));
+    }
+
+    let mut edges_json: Vec<serde_json::Value> = Vec::new();
+    for rec in &records {
+        let stability: f64 = rec.stability.parse().unwrap_or(0.0);
+        let confidence: f64 = rec.confidence.parse().unwrap_or(0.0);
+        let importance: f64 = rec.importance.parse().unwrap_or(0.0);
+        edges_json.push(serde_json::json!({
+            "source": rec.from,
+            "target": rec.to,
+            "content": rec.content,
+            "stability": stability,
+            "confidence": confidence,
+            "importance": importance,
+        }));
+    }
+
+    let graph = serde_json::json!({ "nodes": nodes_json, "edges": edges_json });
+    Ok(toon::encode(&graph, None))
+}
+
 fn render_svg(dot_path: &str, svg_path: &str) -> Result<bool, Box<dyn Error>> {
     let probe = std::process::Command::new("dot").arg("-V").output();
     if probe.is_err() {
@@ -172,6 +322,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dot = format!("{}", Dot::with_config(&graph, &[]));
     fs::write("output/kratt-graph.dot", &dot)?;
     println!("Wrote output/kratt-graph.dot");
+
+    let gexf = write_gexf(&nodes, &edges)?;
+    fs::write("output/kratt-graph.gexf", &gexf)?;
+    println!("Wrote output/kratt-graph.gexf");
+
+    let toon_out = write_toon(&nodes, &edges)?;
+    fs::write("output/kratt-graph.toon", &toon_out)?;
+    println!("Wrote output/kratt-graph.toon");
 
     match render_svg("output/kratt-graph.dot", "output/kratt-graph.svg")? {
         true => println!("Rendered output/kratt-graph.svg"),
