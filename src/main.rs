@@ -12,7 +12,90 @@
 use serde::Deserialize;
 use std::error::Error;
 
-// ─── API response types ──────────────────────────────────────────────────────
+// ─── Backend ──────────────────────────────────────────────────────────────────
+
+const ENV_BACKEND: &str = "KRATT_BACKEND";
+const ENV_OLLAMA_MODEL: &str = "OLLAMA_MODEL";
+const ENV_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
+const ENV_OPENROUTER_MODEL: &str = "OPENROUTER_MODEL";
+
+const DEFAULT_BACKEND: &str = "ollama";
+const DEFAULT_OLLAMA_MODEL: &str = "gemma4:e4b";
+const DEFAULT_OPENROUTER_MODEL: &str = "deepseek/deepseek-v4-flash";
+
+const URL_OPENROUTER: &str = "https://openrouter.ai/api/v1/chat/completions";
+const URL_OLLAMA: &str = "http://localhost:11434/v1/chat/completions";
+
+const TOON_PATH: &str = "output/kratt-graph.toon";
+
+enum Backend {
+    OpenRouter { api_key: String, model: String },
+    Ollama { model: String },
+}
+
+impl Backend {
+    fn from_env() -> Result<Self, Box<dyn Error>> {
+        let name = std::env::var(ENV_BACKEND).unwrap_or_else(|_| DEFAULT_BACKEND.to_string());
+        match name.as_str() {
+            "ollama" => {
+                let model = std::env::var(ENV_OLLAMA_MODEL)
+                    .unwrap_or_else(|_| DEFAULT_OLLAMA_MODEL.to_string());
+                Ok(Backend::Ollama { model })
+            }
+            _ => {
+                let api_key = std::env::var(ENV_OPENROUTER_API_KEY)?;
+                let model = std::env::var(ENV_OPENROUTER_MODEL)
+                    .unwrap_or_else(|_| DEFAULT_OPENROUTER_MODEL.to_string());
+                Ok(Backend::OpenRouter { api_key, model })
+            }
+        }
+    }
+
+    fn url(&self) -> &str {
+        match self {
+            Backend::OpenRouter { .. } => URL_OPENROUTER,
+            Backend::Ollama { .. } => URL_OLLAMA,
+        }
+    }
+
+    fn model(&self) -> &str {
+        match self {
+            Backend::OpenRouter { model, .. } => model,
+            Backend::Ollama { model } => model,
+        }
+    }
+
+    fn auth_header(&self) -> Option<String> {
+        match self {
+            Backend::OpenRouter { api_key, .. } => Some(format!("Bearer {api_key}")),
+            Backend::Ollama { .. } => None,
+        }
+    }
+
+    fn label(&self) -> &str {
+        match self {
+            Backend::OpenRouter { model, .. } => model,
+            Backend::Ollama { model } => model,
+        }
+    }
+
+    // Ollama enforces valid JSON natively; OpenRouter relies on assistant prefill.
+    fn uses_prefill(&self) -> bool {
+        match self {
+            Backend::OpenRouter { .. } => true,
+            Backend::Ollama { .. } => false,
+        }
+    }
+
+    fn json_format(&self) -> Option<&str> {
+        match self {
+            Backend::OpenRouter { .. } => None,
+            Backend::Ollama { .. } => Some("json"),
+        }
+    }
+}
+
+// ─── API response types ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct ChatResponse {
@@ -35,10 +118,11 @@ struct Usage {
     prompt_tokens: u32,
     completion_tokens: u32,
     total_tokens: u32,
-    cost: f64,
+    #[serde(default)]
+    cost: Option<f64>,
 }
 
-// ─── Prompt parts ────────────────────────────────────────────────────────────
+// ─── Prompt parts ─────────────────────────────────────────────────────────────
 
 const EXPLANATION: &str = r#"You are an AI with your own persistent memory stored as a knowledge graph. This graph is your mind — not a database about the person you are talking to, but your own accumulated knowledge, experiences, and relationships.
 
@@ -97,7 +181,7 @@ Keep templates short and reusable. Prefer existing templates over new ones.
 
 **Taxonomy links must chain.** Link entities through every level of category so unrelated nodes can connect through shared concepts."#;
 
-// ─── Build the full system prompt ────────────────────────────────────────────
+// ─── Build the full system prompt ─────────────────────────────────────────────
 
 fn build_system_prompt(toon: &str) -> String {
     let mut prompt = String::new();
@@ -112,7 +196,7 @@ fn build_system_prompt(toon: &str) -> String {
 }
 
 fn read_toon() -> String {
-    std::fs::read_to_string("output/kratt-graph.toon").unwrap_or_default()
+    std::fs::read_to_string(TOON_PATH).unwrap_or_default()
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -120,50 +204,64 @@ fn read_toon() -> String {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv()?;
-    let api_key = std::env::var("OPENROUTER_API_KEY")?;
+
+    let backend = Backend::from_env()?;
+    println!("backend: {}", backend.label());
 
     let toon = read_toon();
     let system_prompt = build_system_prompt(&toon);
 
     let user_prompt = "Mari has a cat named Whiskers. Whiskers is very playful and loves to chase laser pointers. One day, Whiskers got lost but was found by a kind stranger who returned him to Mari.";
 
-    let client = reqwest::Client::new();
-    let body = serde_json::json!({
-        "model": "deepseek/deepseek-v4-flash",
-        "messages": [
-            { "role": "system", "content": system_prompt },
-            { "role": "user",   "content": user_prompt },
-            { "role": "assistant", "content": "{" }
-        ]
-    });
+    let mut messages = vec![
+        serde_json::json!({ "role": "system", "content": system_prompt }),
+        serde_json::json!({ "role": "user",   "content": user_prompt }),
+    ];
+    if backend.uses_prefill() {
+        messages.push(serde_json::json!({ "role": "assistant", "content": "{" }));
+    }
 
-    let response = client
-        .post("https://openrouter.ai/api/v1/chat/completions")
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&body)
-        .send()
-        .await?
-        .json::<ChatResponse>()
-        .await?;
+    let mut body = serde_json::json!({ "model": backend.model(), "messages": messages });
+    if let Some(fmt) = backend.json_format() {
+        body["format"] = serde_json::json!(fmt);
+    }
+
+    let client = reqwest::Client::new();
+    let mut request = client.post(backend.url()).json(&body);
+    if let Some(auth) = backend.auth_header() {
+        request = request.header("Authorization", auth);
+    }
+
+    let response = request.send().await?.json::<ChatResponse>().await?;
 
     let Some(choice) = response.choices.first() else {
         return Err("no choices in response".into());
     };
 
-    // The prefill `{` is not echoed back — prepend it for valid JSON
-    let raw = format!("{{{}", choice.message.content);
+    // OpenRouter does not echo the prefill — prepend `{` if missing
+    let content = choice.message.content.as_str();
+    let raw = if content.starts_with('{') {
+        content.to_string()
+    } else {
+        format!("{{{content}")
+    };
     let pretty = match serde_json::from_str::<serde_json::Value>(&raw) {
         Ok(v) => serde_json::to_string_pretty(&v)?,
         Err(_) => raw,
     };
     println!("{pretty}");
-    println!(
-        "\ntokens: {}+{}={} cost: ${:.6}",
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-        response.usage.total_tokens,
-        response.usage.cost,
-    );
+
+    let u = &response.usage;
+    match u.cost {
+        Some(cost) => println!(
+            "\ntokens: {}+{}={} cost: ${:.6}",
+            u.prompt_tokens, u.completion_tokens, u.total_tokens, cost
+        ),
+        None => println!(
+            "\ntokens: {}+{}={}",
+            u.prompt_tokens, u.completion_tokens, u.total_tokens
+        ),
+    }
 
     Ok(())
 }

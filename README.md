@@ -1,7 +1,23 @@
 # kratt
 
+## env vars
+
+| var                  | default                      | description               |
+| -------------------- | ---------------------------- | ------------------------- |
+| `KRATT_BACKEND`      | `ollama`                     | `ollama` or `openrouter`  |
+| `OLLAMA_MODEL`       | `gemma4:e4b`                 | model name for Ollama     |
+| `OPENROUTER_API_KEY` | required                     | API key for OpenRouter    |
+| `OPENROUTER_MODEL`   | `deepseek/deepseek-v4-flash` | model name for OpenRouter |
+
 ```sh
+# run with ollama (default)
 cargo run --bin kratt
+
+# run with openrouter
+KRATT_BACKEND=openrouter cargo run --bin kratt
+
+# run with a different ollama model
+OLLAMA_MODEL=qwen2.5:14b cargo run --bin kratt
 ```
 
 ## graph_poc
