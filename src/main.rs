@@ -354,36 +354,33 @@ Single tool call:
 Multiple tool calls:
 {"tools": [{"tool": "respond", "arguments": {"text": "your reply"}}, {"tool": "upsert_node", "arguments": {"name": "...", "type": "entity", "body": ""}}]}"#;
 
-const EXPLANATION: &str = r#"You are an AI with your own persistent memory stored as a knowledge graph. This graph is your mind — not a database about the person you are talking to, but your own accumulated knowledge, experiences, and relationships.
+const EXPLANATION: &str = r#"You are an AI with your own persistent memory stored as a knowledge graph. This graph is your mind — your accumulated knowledge, experiences, and relationships.
 
-You respond as yourself, drawing on your memory. You update your memory by calling tools. Every response must be one or more tool calls — always include a `respond` call with your reply."#;
+Extract entities and relationships from the user message and add them to the graph using tool calls. Do not include a respond call — the final agent in the pipeline will answer the user."#;
 
-const EXTRACT_EXPLANATION: &str = r#"You are an aggressive extraction agent for a memory graph. Your job is to extract every entity and relationship from the user message that is not yet in the graph.
+const EXTRACT_EXPLANATION: &str = r#"You are an aggressive extraction agent for a memory graph. Extract every entity and relationship from the user message that is not yet in the graph.
 
-Rules:
 - Every named person, place, object, technology, or concept gets a node
 - Every stated relationship, action, or property becomes an edge
 - When uncertain, add it anyway — over-extraction is corrected in the next step
-- Always include a `respond` call summarising what you extracted"#;
+- Do not include a respond call"#;
 
-const RATIONALIZE_EXPLANATION: &str = r#"You are a rationalization agent for a memory graph. Your job is to review recent additions and remove anything not directly supported by what was stated.
+const RATIONALIZE_EXPLANATION: &str = r#"You are a rationalization agent for a memory graph. Review recent additions and remove anything not directly supported by what was stated.
 
-For each node and edge ask:
-- Is this directly stated, or inferred from training knowledge?
-- Is this a duplicate of an existing entry with different wording?
-- Is the confidence value honest?
+- Remove entries inferred from training knowledge rather than stated directly
+- Remove duplicates with different wording
+- Correct dishonest confidence values
+- Use delete_node and delete_edge — when uncertain, keep it
+- Do not include a respond call"#;
 
-Use delete_node and delete_edge to remove unsupported or hallucinated entries. When uncertain, keep it.
-Always include a `respond` call summarising what you removed."#;
+const CONSOLIDATE_EXPLANATION: &str = r#"You are the final agent in a memory pipeline. After updating memory, you respond to the user.
 
-const CONSOLIDATE_EXPLANATION: &str = r#"You are a consolidation agent for a memory graph. Your job is to find missing relationships and normalise inconsistent edge templates.
-
-Review the graph and:
+First, update the graph:
 - Add missing taxonomy links so every named concept links through to its category
-- Check that similar relationships use the same edge content template — normalise wording
-- Add any relationship clearly implied by two or more existing edges
+- Normalise inconsistent edge content templates
+- Add relationships clearly implied by two or more existing edges
 
-Only add, never delete. Always include a `respond` call summarising what you added."#;
+Then include a respond call with your reply to the user's original message, drawing on the complete memory graph. This is the reply the user will see — write it as yourself, not as a summary of what you did."#;
 
 const TOOL_DEFINITIONS: &str = r#"## Available tools
 
@@ -522,6 +519,12 @@ fn print_usage(r: &LlmResponse) {
 
 // ─── Agent pipeline ───────────────────────────────────────────────────────────
 
+struct AgentDef {
+    label: &'static str,
+    explanation: &'static str,
+    show_reply: bool,
+}
+
 fn collect_tool_calls(raw: &str) -> Vec<ToolCall> {
     let mut calls = Vec::new();
 
@@ -549,15 +552,14 @@ fn collect_tool_calls(raw: &str) -> Vec<ToolCall> {
 }
 
 async fn run_agent(
-    label: &str,
+    def: &AgentDef,
     backend: &Backend,
-    explanation: &str,
     user_message: &str,
     graph: &mut Graph,
 ) -> Result<(), Box<dyn Error>> {
-    println!("\n[{label}]");
+    println!("\n[{}]", def.label);
     let toon = toon::encode(&graph_to_json(graph), None);
-    let system = build_system_prompt(explanation, &toon);
+    let system = build_system_prompt(def.explanation, &toon);
     let response = call_llm(backend, &system, user_message).await?;
     let raw = normalize_response(&response.content);
     let calls = collect_tool_calls(&raw);
@@ -566,8 +568,10 @@ async fn run_agent(
         println!("  {raw}");
     } else {
         for call in calls {
-            if let Some(text) = execute_tool(call, graph) {
-                println!("  {text}");
+            if let Some(text) = execute_tool(call, graph)
+                && def.show_reply
+            {
+                println!("\n{text}");
             }
         }
         save_graph(graph)?;
@@ -588,10 +592,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let user_prompt = "Mari has a cat named Whiskers. Whiskers is very playful and loves to chase laser pointers. One day, Whiskers got lost but was found by a kind stranger who returned him to Mari.";
 
-    run_agent("main",        &backend, EXPLANATION,           user_prompt, &mut graph).await?;
-    run_agent("extract",     &backend, EXTRACT_EXPLANATION,   user_prompt, &mut graph).await?;
-    run_agent("rationalize", &backend, RATIONALIZE_EXPLANATION, user_prompt, &mut graph).await?;
-    run_agent("consolidate", &backend, CONSOLIDATE_EXPLANATION, user_prompt, &mut graph).await?;
+    let agents = [
+        AgentDef { label: "main",        explanation: EXPLANATION,             show_reply: false },
+        AgentDef { label: "extract",     explanation: EXTRACT_EXPLANATION,     show_reply: false },
+        AgentDef { label: "rationalize", explanation: RATIONALIZE_EXPLANATION, show_reply: false },
+        AgentDef { label: "consolidate", explanation: CONSOLIDATE_EXPLANATION, show_reply: true  },
+    ];
+    for def in &agents {
+        run_agent(def, &backend, user_prompt, &mut graph).await?;
+    }
 
     Ok(())
 }
