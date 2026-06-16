@@ -6,11 +6,13 @@
     clippy::too_many_lines,
     clippy::too_many_arguments,
     clippy::type_complexity,
-    clippy::wildcard_imports,
+    clippy::wildcard_imports
 )]
 
 use serde::Deserialize;
 use std::error::Error;
+
+// ─── API response types ──────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct ChatResponse {
@@ -36,18 +38,102 @@ struct Usage {
     cost: f64,
 }
 
+// ─── Prompt parts ────────────────────────────────────────────────────────────
+
+const EXPLANATION: &str = r#"You are an AI with your own persistent memory stored as a knowledge graph. This graph is your mind — not a database about the person you are talking to, but your own accumulated knowledge, experiences, and relationships.
+
+You respond as yourself, drawing on your memory. You update your memory by calling tools. Every response must be one or more tool calls — always include a `respond` call with your reply.
+
+Respond with raw JSON only. No markdown. No prose. No code fences. Start immediately with `{`.
+
+Single tool call:
+{"tool": "respond", "arguments": {"text": "your reply here"}}
+
+Multiple tool calls:
+{"tools": [{"tool": "respond", "arguments": {"text": "your reply"}}, {"tool": "upsert_node", "arguments": {"name": "...", "type": "entity", "body": ""}}]}"#;
+
+const TOOL_DEFINITIONS: &str = r#"## Available tools
+
+### respond
+Reply to the user as yourself, drawing on your memory.
+{"tool": "respond", "arguments": {"text": "string"}}
+
+### upsert_node
+Create or update a node. Entity bodies are always empty. Fact bodies are one sentence, no trailing period.
+{"tool": "upsert_node", "arguments": {"name": "kebab-case-string", "type": "entity | fact", "body": "string"}}
+
+### upsert_edge
+Create or update a directed edge between two nodes.
+- content: template like "<subject> verb <target>" or "<subject> verb <fact>"
+- stability: 1.0 permanent, 0.7 can change, 0.3 temporary
+- confidence: 1.0 stated clearly, 0.7 stated once, 0.4 inferred, 0.1 uncertain
+- importance: 1.0 target must load with source, 0.0 supplementary
+{"tool": "upsert_edge", "arguments": {"source": "string", "target": "string", "content": "string", "stability": 0.0, "confidence": 0.0, "importance": 0.0}}
+
+### delete_node
+Remove a node from the graph.
+{"tool": "delete_node", "arguments": {"name": "string"}}
+
+### delete_edge
+Remove a directed edge from the graph.
+{"tool": "delete_edge", "arguments": {"source": "string", "target": "string"}}"#;
+
+const MEMORY_RULES: &str = r#"## Memory rules
+
+**Node types**
+- entity — a person, place, technology, or named concept. Body is always empty.
+- fact — one atomic claim. Body is exactly one sentence, no trailing period.
+
+**Edge content templates**
+Use `<subject>` for the source node, `<target>` for the target node, `<fact>` when the target is a fact node.
+Example: `"<subject> works as <target>"`, `"<subject> has <fact>"`
+Keep templates short and reusable. Prefer existing templates over new ones.
+
+**One-way links only.** Never add reverse links — backlinks are implicit.
+
+**Never hallucinate.** Only store what was explicitly stated in the conversation. If something was not said, it does not go in the graph.
+
+**Extract aggressively.** Every named entity gets a node. Every stated relationship becomes an edge. If a fact involves multiple entities, create edges from each of them.
+
+**Taxonomy links must chain.** Link entities through every level of category so unrelated nodes can connect through shared concepts."#;
+
+// ─── Build the full system prompt ────────────────────────────────────────────
+
+fn build_system_prompt(toon: &str) -> String {
+    let mut prompt = String::new();
+    prompt.push_str(EXPLANATION);
+    prompt.push_str("\n\n");
+    prompt.push_str(TOOL_DEFINITIONS);
+    prompt.push_str("\n\n");
+    prompt.push_str(MEMORY_RULES);
+    prompt.push_str("\n\n## Current memory state\n\n");
+    prompt.push_str(toon);
+    prompt
+}
+
+fn read_toon() -> String {
+    std::fs::read_to_string("output/kratt-graph.toon").unwrap_or_default()
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv()?;
     let api_key = std::env::var("OPENROUTER_API_KEY")?;
 
-    let client = reqwest::Client::new();
+    let toon = read_toon();
+    let system_prompt = build_system_prompt(&toon);
 
+    let user_prompt = "Mari has a cat named Whiskers. Whiskers is very playful and loves to chase laser pointers. One day, Whiskers got lost but was found by a kind stranger who returned him to Mari.";
+
+    let client = reqwest::Client::new();
     let body = serde_json::json!({
         "model": "deepseek/deepseek-v4-flash",
         "messages": [
-            { "role": "system", "content": "You are a helpful assistant." },
-            { "role": "user", "content": "Hello" }
+            { "role": "system", "content": system_prompt },
+            { "role": "user",   "content": user_prompt },
+            { "role": "assistant", "content": "{" }
         ]
     });
 
@@ -64,9 +150,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err("no choices in response".into());
     };
 
-    println!("{}", choice.message.content);
+    // The prefill `{` is not echoed back — prepend it for valid JSON
+    let raw = format!("{{{}", choice.message.content);
+    let pretty = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(v) => serde_json::to_string_pretty(&v)?,
+        Err(_) => raw,
+    };
+    println!("{pretty}");
     println!(
-        "tokens: {}+{}={} cost: ${:.6}",
+        "\ntokens: {}+{}={} cost: ${:.6}",
         response.usage.prompt_tokens,
         response.usage.completion_tokens,
         response.usage.total_tokens,
