@@ -23,9 +23,10 @@ const ENV_OPENROUTER_MODEL: &str = "OPENROUTER_MODEL";
 const DEFAULT_BACKEND: &str = "ollama";
 const DEFAULT_OLLAMA_MODEL: &str = "gemma4:e4b";
 const DEFAULT_OPENROUTER_MODEL: &str = "deepseek/deepseek-v4-flash";
+const OLLAMA_NUM_CTX: u32 = 16384;
 
 const URL_OPENROUTER: &str = "https://openrouter.ai/api/v1/chat/completions";
-const URL_OLLAMA: &str = "http://localhost:11434/v1/chat/completions";
+const URL_OLLAMA: &str = "http://localhost:11434/api/chat";
 
 const TOON_PATH: &str = "output/kratt-graph.toon";
 
@@ -52,73 +53,61 @@ impl Backend {
         }
     }
 
-    fn url(&self) -> &str {
-        match self {
-            Backend::OpenRouter { .. } => URL_OPENROUTER,
-            Backend::Ollama { .. } => URL_OLLAMA,
-        }
-    }
-
-    fn model(&self) -> &str {
-        match self {
-            Backend::OpenRouter { model, .. } => model,
-            Backend::Ollama { model } => model,
-        }
-    }
-
-    fn auth_header(&self) -> Option<String> {
-        match self {
-            Backend::OpenRouter { api_key, .. } => Some(format!("Bearer {api_key}")),
-            Backend::Ollama { .. } => None,
-        }
-    }
-
     fn label(&self) -> &str {
         match self {
             Backend::OpenRouter { model, .. } => model,
             Backend::Ollama { model } => model,
         }
     }
-
-    fn uses_prefill(&self) -> bool {
-        match self {
-            Backend::OpenRouter { .. } => true,
-            Backend::Ollama { .. } => false,
-        }
-    }
-
-    fn json_format(&self) -> Option<&str> {
-        match self {
-            Backend::OpenRouter { .. } => None,
-            Backend::Ollama { .. } => Some("json"),
-        }
-    }
 }
 
 // ─── API response types ───────────────────────────────────────────────────────
 
+// OpenRouter / OpenAI-compatible
 #[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<Choice>,
-    usage: Usage,
+struct OpenAiResponse {
+    choices: Vec<OpenAiChoice>,
+    usage: OpenAiUsage,
 }
 
 #[derive(Deserialize)]
-struct Choice {
-    message: Message,
+struct OpenAiChoice {
+    message: OpenAiMessage,
 }
 
 #[derive(Deserialize)]
-struct Message {
+struct OpenAiMessage {
     content: String,
 }
 
 #[derive(Deserialize)]
-struct Usage {
+struct OpenAiUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
-    total_tokens: u32,
     #[serde(default)]
+    cost: Option<f64>,
+}
+
+// Ollama native /api/chat
+#[derive(Deserialize)]
+struct OllamaResponse {
+    message: OllamaMessage,
+    #[serde(default)]
+    prompt_eval_count: Option<u32>,
+    #[serde(default)]
+    eval_count: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct OllamaMessage {
+    content: String,
+}
+
+// Unified response used through the rest of the code
+struct LlmResponse {
+    content: String,
+    prompt_tokens: u32,
+    completion_tokens: u32,
     cost: Option<f64>,
 }
 
@@ -357,17 +346,44 @@ fn execute_tool(call: ToolCall, graph: &mut Graph) -> Option<String> {
 
 // ─── Prompt parts ─────────────────────────────────────────────────────────────
 
-const EXPLANATION: &str = r#"You are an AI with your own persistent memory stored as a knowledge graph. This graph is your mind — not a database about the person you are talking to, but your own accumulated knowledge, experiences, and relationships.
-
-You respond as yourself, drawing on your memory. You update your memory by calling tools. Every response must be one or more tool calls — always include a `respond` call with your reply.
-
-Respond with raw JSON only. No markdown. No prose. No code fences. Start immediately with `{`.
+const JSON_OUTPUT_RULES: &str = r#"Respond with raw JSON only. No markdown. No prose. No code fences. Start immediately with `{`.
 
 Single tool call:
 {"tool": "respond", "arguments": {"text": "your reply here"}}
 
 Multiple tool calls:
 {"tools": [{"tool": "respond", "arguments": {"text": "your reply"}}, {"tool": "upsert_node", "arguments": {"name": "...", "type": "entity", "body": ""}}]}"#;
+
+const EXPLANATION: &str = r#"You are an AI with your own persistent memory stored as a knowledge graph. This graph is your mind — not a database about the person you are talking to, but your own accumulated knowledge, experiences, and relationships.
+
+You respond as yourself, drawing on your memory. You update your memory by calling tools. Every response must be one or more tool calls — always include a `respond` call with your reply."#;
+
+const EXTRACT_EXPLANATION: &str = r#"You are an aggressive extraction agent for a memory graph. Your job is to extract every entity and relationship from the user message that is not yet in the graph.
+
+Rules:
+- Every named person, place, object, technology, or concept gets a node
+- Every stated relationship, action, or property becomes an edge
+- When uncertain, add it anyway — over-extraction is corrected in the next step
+- Always include a `respond` call summarising what you extracted"#;
+
+const RATIONALIZE_EXPLANATION: &str = r#"You are a rationalization agent for a memory graph. Your job is to review recent additions and remove anything not directly supported by what was stated.
+
+For each node and edge ask:
+- Is this directly stated, or inferred from training knowledge?
+- Is this a duplicate of an existing entry with different wording?
+- Is the confidence value honest?
+
+Use delete_node and delete_edge to remove unsupported or hallucinated entries. When uncertain, keep it.
+Always include a `respond` call summarising what you removed."#;
+
+const CONSOLIDATE_EXPLANATION: &str = r#"You are a consolidation agent for a memory graph. Your job is to find missing relationships and normalise inconsistent edge templates.
+
+Review the graph and:
+- Add missing taxonomy links so every named concept links through to its category
+- Check that similar relationships use the same edge content template — normalise wording
+- Add any relationship clearly implied by two or more existing edges
+
+Only add, never delete. Always include a `respond` call summarising what you added."#;
 
 const TOOL_DEFINITIONS: &str = r#"## Available tools
 
@@ -414,9 +430,11 @@ Keep templates short and reusable. Prefer existing templates over new ones.
 
 **Taxonomy links must chain.** Link entities through every level of category so unrelated nodes can connect through shared concepts."#;
 
-fn build_system_prompt(toon: &str) -> String {
+fn build_system_prompt(explanation: &str, toon: &str) -> String {
     let mut prompt = String::new();
-    prompt.push_str(EXPLANATION);
+    prompt.push_str(explanation);
+    prompt.push_str("\n\n");
+    prompt.push_str(JSON_OUTPUT_RULES);
     prompt.push_str("\n\n");
     prompt.push_str(TOOL_DEFINITIONS);
     prompt.push_str("\n\n");
@@ -428,28 +446,62 @@ fn build_system_prompt(toon: &str) -> String {
 
 // ─── HTTP ─────────────────────────────────────────────────────────────────────
 
-async fn call_llm(
-    backend: &Backend,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<ChatResponse, Box<dyn Error>> {
-    let mut messages = vec![
-        serde_json::json!({ "role": "system", "content": system_prompt }),
-        serde_json::json!({ "role": "user",   "content": user_prompt }),
-    ];
-    if backend.uses_prefill() {
-        messages.push(serde_json::json!({ "role": "assistant", "content": "{" }));
+async fn call_ollama(model: &str, system_prompt: &str, user_prompt: &str) -> Result<LlmResponse, Box<dyn Error>> {
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user",   "content": user_prompt },
+        ],
+        "stream": false,
+        "format": "json",
+        "options": { "num_ctx": OLLAMA_NUM_CTX },
+    });
+    let resp: OllamaResponse = reqwest::Client::new()
+        .post(URL_OLLAMA)
+        .json(&body)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let prompt = resp.prompt_eval_count.unwrap_or(0);
+    let completion = resp.eval_count.unwrap_or(0);
+    Ok(LlmResponse { content: resp.message.content, prompt_tokens: prompt, completion_tokens: completion, cost: None })
+}
+
+async fn call_openrouter(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<LlmResponse, Box<dyn Error>> {
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system",    "content": system_prompt },
+            { "role": "user",      "content": user_prompt },
+            { "role": "assistant", "content": "{" },
+        ],
+    });
+    let resp: OpenAiResponse = reqwest::Client::new()
+        .post(URL_OPENROUTER)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let Some(choice) = resp.choices.into_iter().next() else {
+        return Err("no choices in response".into());
+    };
+    Ok(LlmResponse {
+        content: choice.message.content,
+        prompt_tokens: resp.usage.prompt_tokens,
+        completion_tokens: resp.usage.completion_tokens,
+        cost: resp.usage.cost,
+    })
+}
+
+async fn call_llm(backend: &Backend, system_prompt: &str, user_prompt: &str) -> Result<LlmResponse, Box<dyn Error>> {
+    match backend {
+        Backend::Ollama { model } => call_ollama(model, system_prompt, user_prompt).await,
+        Backend::OpenRouter { api_key, model } => call_openrouter(api_key, model, system_prompt, user_prompt).await,
     }
-    let mut body = serde_json::json!({ "model": backend.model(), "messages": messages });
-    if let Some(fmt) = backend.json_format() {
-        body["format"] = serde_json::json!(fmt);
-    }
-    let client = reqwest::Client::new();
-    let mut request = client.post(backend.url()).json(&body);
-    if let Some(auth) = backend.auth_header() {
-        request = request.header("Authorization", auth);
-    }
-    Ok(request.send().await?.json::<ChatResponse>().await?)
 }
 
 fn normalize_response(content: &str) -> String {
@@ -461,6 +513,69 @@ fn normalize_response(content: &str) -> String {
     }
 }
 
+fn print_usage(r: &LlmResponse) {
+    match r.cost {
+        Some(cost) => println!("  tokens: {}+{}={} cost: ${:.6}", r.prompt_tokens, r.completion_tokens, r.prompt_tokens + r.completion_tokens, cost),
+        None => println!("  tokens: {}+{}={}", r.prompt_tokens, r.completion_tokens, r.prompt_tokens + r.completion_tokens),
+    }
+}
+
+// ─── Agent pipeline ───────────────────────────────────────────────────────────
+
+fn collect_tool_calls(raw: &str) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+
+    // Try as-is
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        for call in parse_tool_calls(&v) { calls.push(call); }
+        return calls;
+    }
+    // Try with a missing closing brace (model truncated the outer object)
+    let with_brace = format!("{raw}}}");
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&with_brace) {
+        for call in parse_tool_calls(&v) { calls.push(call); }
+        return calls;
+    }
+    // Try each line separately (model emitted multiple JSON objects)
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() { continue; }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+            for call in parse_tool_calls(&v) { calls.push(call); }
+        }
+    }
+
+    calls
+}
+
+async fn run_agent(
+    label: &str,
+    backend: &Backend,
+    explanation: &str,
+    user_message: &str,
+    graph: &mut Graph,
+) -> Result<(), Box<dyn Error>> {
+    println!("\n[{label}]");
+    let toon = toon::encode(&graph_to_json(graph), None);
+    let system = build_system_prompt(explanation, &toon);
+    let response = call_llm(backend, &system, user_message).await?;
+    let raw = normalize_response(&response.content);
+    let calls = collect_tool_calls(&raw);
+    if calls.is_empty() {
+        eprintln!("  could not parse any tool calls");
+        println!("  {raw}");
+    } else {
+        for call in calls {
+            if let Some(text) = execute_tool(call, graph) {
+                println!("  {text}");
+            }
+        }
+        save_graph(graph)?;
+    }
+    print_usage(&response);
+    Ok(())
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -470,40 +585,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("backend: {}", backend.label());
 
     let mut graph = load_graph();
-    let toon = toon::encode(&graph_to_json(&graph), None);
-    let system_prompt = build_system_prompt(&toon);
 
     let user_prompt = "Mari has a cat named Whiskers. Whiskers is very playful and loves to chase laser pointers. One day, Whiskers got lost but was found by a kind stranger who returned him to Mari.";
 
-    let response = call_llm(&backend, &system_prompt, user_prompt).await?;
-    let Some(choice) = response.choices.first() else {
-        return Err("no choices in response".into());
-    };
-
-    let raw = normalize_response(&choice.message.content);
-    match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(v) => {
-            for call in parse_tool_calls(&v) {
-                if let Some(text) = execute_tool(call, &mut graph) {
-                    println!("{text}");
-                }
-            }
-            save_graph(&graph)?;
-            if let Ok(pretty) = serde_json::to_string_pretty(&v) {
-                println!("\n{pretty}");
-            }
-        }
-        Err(e) => {
-            eprintln!("warning: invalid JSON response: {e}");
-            println!("{raw}");
-        }
-    }
-
-    let u = &response.usage;
-    match u.cost {
-        Some(cost) => println!("\ntokens: {}+{}={} cost: ${:.6}", u.prompt_tokens, u.completion_tokens, u.total_tokens, cost),
-        None => println!("\ntokens: {}+{}={}", u.prompt_tokens, u.completion_tokens, u.total_tokens),
-    }
+    run_agent("main",        &backend, EXPLANATION,           user_prompt, &mut graph).await?;
+    run_agent("extract",     &backend, EXTRACT_EXPLANATION,   user_prompt, &mut graph).await?;
+    run_agent("rationalize", &backend, RATIONALIZE_EXPLANATION, user_prompt, &mut graph).await?;
+    run_agent("consolidate", &backend, CONSOLIDATE_EXPLANATION, user_prompt, &mut graph).await?;
 
     Ok(())
 }
