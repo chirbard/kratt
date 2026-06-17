@@ -12,6 +12,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
+use std::process::Command;
 
 // ─── Backend ──────────────────────────────────────────────────────────────────
 
@@ -28,7 +29,8 @@ const OLLAMA_NUM_CTX: u32 = 16384;
 const URL_OPENROUTER: &str = "https://openrouter.ai/api/v1/chat/completions";
 const URL_OLLAMA: &str = "http://localhost:11434/api/chat";
 
-const TOON_PATH: &str = "output/kratt-graph.toon";
+const DATA_DIR: &str = "kratt-data";
+const TOON_PATH: &str = "kratt-data/kratt-graph.toon";
 
 enum Backend {
     OpenRouter { api_key: String, model: String },
@@ -251,8 +253,49 @@ fn graph_to_json(graph: &Graph) -> serde_json::Value {
 }
 
 fn save_graph(graph: &Graph) -> Result<(), Box<dyn Error>> {
-    std::fs::create_dir_all("output")?;
+    std::fs::create_dir_all(DATA_DIR)?;
     std::fs::write(TOON_PATH, toon::encode(&graph_to_json(graph), None))?;
+    Ok(())
+}
+
+// ─── Git ──────────────────────────────────────────────────────────────────────
+
+fn run_git(args: &[&str]) -> Result<(), Box<dyn Error>> {
+    let status = Command::new("git").args(args).status()?;
+    if !status.success() {
+        return Err(format!("git {args:?} failed with {status}").into());
+    }
+    Ok(())
+}
+
+fn git_init_if_needed() -> Result<(), Box<dyn Error>> {
+    let git_dir = std::path::Path::new(DATA_DIR).join(".git");
+    if git_dir.exists() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(DATA_DIR)?;
+    run_git(&["init", DATA_DIR])?;
+    run_git(&["-C", DATA_DIR, "config", "user.email", "kratt@local"])?;
+    run_git(&["-C", DATA_DIR, "config", "user.name", "kratt"])?;
+    Ok(())
+}
+
+fn git_commit(label: &str) -> Result<(), Box<dyn Error>> {
+    run_git(&["-C", DATA_DIR, "add", "kratt-graph.toon"])?;
+    // git diff --cached --quiet exits 0 when nothing is staged, 1 when there are changes
+    let staged = Command::new("git")
+        .args(["-C", DATA_DIR, "diff", "--cached", "--quiet"])
+        .status()?;
+    if staged.success() {
+        return Ok(());
+    }
+    run_git(&[
+        "-C",
+        DATA_DIR,
+        "commit",
+        "-m",
+        &format!("{label}: update memory"),
+    ])?;
     Ok(())
 }
 
@@ -669,6 +712,7 @@ async fn run_agent(
             }
         }
         save_graph(graph)?;
+        git_commit(def.label)?;
     }
     print_usage(&response);
     Ok(())
@@ -682,6 +726,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let backend = Backend::from_env()?;
     println!("backend: {}", backend.label());
 
+    git_init_if_needed()?;
     let mut graph = load_graph();
 
     let user_prompt = "Mari has a cat named Whiskers. Whiskers is very playful and loves to chase laser pointers. One day, Whiskers got lost but was found by a kind stranger who returned him to Mari.";

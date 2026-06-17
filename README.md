@@ -42,7 +42,7 @@ open output/kratt-graph.gexf
 | `output/kratt-graph.dot`  | graphviz source                    |
 | `output/kratt-graph.svg`  | rendered graph (requires graphviz) |
 | `output/kratt-graph.gexf` | Gephi import                       |
-| `output/kratt-graph.toon` | LLM wire format                    |
+| `output/kratt-graph.toon` | LLM wire format (graph_poc)        |
 
 ### graphviz (optional)
 
@@ -51,9 +51,23 @@ brew install graphviz
 dot -Tsvg output/kratt-graph.dot -o output/kratt-graph.svg
 ```
 
+## memory (kratt binary)
+
+Graph is stored in `kratt-data/` as its own git repo (gitignored by the main repo).
+Each agent step that modifies the graph commits automatically.
+
+```sh
+# inspect memory history
+git -C kratt-data log --oneline
+
+# reset memory
+rm -rf kratt-data/
+```
+
 ### cleanup
 
 ```sh
 rm -rf kratt-graph.sled   # delete sled db
-rm -rf output/            # delete generated files
+rm -rf output/            # delete graph_poc output
+rm -rf kratt-data/        # delete memory graph and its git history
 ```
