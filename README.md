@@ -10,14 +10,17 @@
 | `OPENROUTER_MODEL`   | `deepseek/deepseek-v4-flash` | model name for OpenRouter |
 
 ```sh
-# run with ollama (default)
+# pass prompt as argument
+cargo run --bin kratt "your message here"
+
+# or start and type when prompted
 cargo run --bin kratt
 
 # run with openrouter
-KRATT_BACKEND=openrouter cargo run --bin kratt
+KRATT_BACKEND=openrouter cargo run --bin kratt "your message here"
 
 # run with a different ollama model
-OLLAMA_MODEL=qwen2.5:14b cargo run --bin kratt
+OLLAMA_MODEL=qwen2.5:14b cargo run --bin kratt "your message here"
 ```
 
 ## graph_poc
@@ -60,7 +63,10 @@ Each agent step that modifies the graph commits automatically.
 # inspect memory history
 git -C kratt-data log --oneline
 
-# reset memory
+# revert to empty state
+git -C kratt-data checkout init -- kratt-graph.toon
+
+# reset memory entirely
 rm -rf kratt-data/
 ```
 

@@ -277,6 +277,9 @@ fn git_init_if_needed() -> Result<(), Box<dyn Error>> {
     run_git(&["init", DATA_DIR])?;
     run_git(&["-C", DATA_DIR, "config", "user.email", "kratt@local"])?;
     run_git(&["-C", DATA_DIR, "config", "user.name", "kratt"])?;
+    save_graph(&Graph::new())?;
+    run_git(&["-C", DATA_DIR, "add", "kratt-graph.toon"])?;
+    run_git(&["-C", DATA_DIR, "commit", "-m", "init: empty memory state"])?;
     Ok(())
 }
 
@@ -729,7 +732,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     git_init_if_needed()?;
     let mut graph = load_graph();
 
-    let user_prompt = "Mari has a cat named Whiskers. Whiskers is very playful and loves to chase laser pointers. One day, Whiskers got lost but was found by a kind stranger who returned him to Mari.";
+    let user_prompt = match std::env::args().nth(1) {
+        Some(arg) => arg,
+        None => {
+            println!("waiting for input...");
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line)?;
+            line.trim().to_string()
+        }
+    };
 
     let agents = [
         AgentDef {
@@ -754,7 +765,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         },
     ];
     for def in &agents {
-        run_agent(def, &backend, user_prompt, &mut graph).await?;
+        run_agent(def, &backend, &user_prompt, &mut graph).await?;
     }
 
     Ok(())
