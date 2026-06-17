@@ -129,11 +129,18 @@ struct Edge {
 
 impl Graph {
     fn new() -> Self {
-        Graph { nodes: HashMap::new(), edges: Vec::new() }
+        Graph {
+            nodes: HashMap::new(),
+            edges: Vec::new(),
+        }
     }
 }
 
-enum ToonSection { None, Edges, Nodes }
+enum ToonSection {
+    None,
+    Edges,
+    Nodes,
+}
 
 fn parse_toon_row(line: &str) -> Vec<String> {
     let mut fields = Vec::new();
@@ -148,17 +155,25 @@ fn parse_toon_row(line: &str) -> Vec<String> {
                     Some(c) => field.push(c),
                 }
             }
-            if chars.peek() == Some(&',') { let _ = chars.next(); }
+            if chars.peek() == Some(&',') {
+                let _ = chars.next();
+            }
             fields.push(field);
         } else {
             let mut field = String::new();
             loop {
                 match chars.peek() {
                     Some(&',') | None => break,
-                    _ => { if let Some(c) = chars.next() { field.push(c); } }
+                    _ => {
+                        if let Some(c) = chars.next() {
+                            field.push(c);
+                        }
+                    }
                 }
             }
-            if chars.peek() == Some(&',') { let _ = chars.next(); }
+            if chars.peek() == Some(&',') {
+                let _ = chars.next();
+            }
             fields.push(field);
         }
     }
@@ -174,27 +189,39 @@ fn load_graph() -> Graph {
     let mut section = ToonSection::None;
     for line in toon.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        if trimmed.starts_with("edges[") { section = ToonSection::Edges; continue; }
-        if trimmed.starts_with("nodes[") { section = ToonSection::Nodes; continue; }
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("edges[") {
+            section = ToonSection::Edges;
+            continue;
+        }
+        if trimmed.starts_with("nodes[") {
+            section = ToonSection::Nodes;
+            continue;
+        }
         match section {
             ToonSection::None => {}
             ToonSection::Edges => {
                 let f = parse_toon_row(trimmed);
-                if f.len() < 6 { continue; }
+                if f.len() < 6 {
+                    continue;
+                }
                 // TOON encodes edge columns alphabetically: confidence, content, importance, source, stability, target
                 graph.edges.push(Edge {
                     confidence: f[0].parse().unwrap_or(0.0),
-                    content:    f[1].clone(),
+                    content: f[1].clone(),
                     importance: f[2].parse().unwrap_or(0.0),
-                    source:     f[3].clone(),
-                    stability:  f[4].parse().unwrap_or(0.0),
-                    target:     f[5].clone(),
+                    source: f[3].clone(),
+                    stability: f[4].parse().unwrap_or(0.0),
+                    target: f[5].clone(),
                 });
             }
             ToonSection::Nodes => {
                 let f = parse_toon_row(trimmed);
-                if f.len() < 2 { continue; }
+                if f.len() < 2 {
+                    continue;
+                }
                 graph.nodes.insert(f[0].clone(), f[1].clone());
             }
         }
@@ -233,13 +260,25 @@ fn save_graph(graph: &Graph) -> Result<(), Box<dyn Error>> {
 
 enum ToolCall {
     Respond(String),
-    UpsertNode { name: String, node_type: String },
-    UpsertEdge {
-        source: String, target: String, content: String,
-        stability: f64, confidence: f64, importance: f64,
+    UpsertNode {
+        name: String,
+        node_type: String,
     },
-    DeleteNode { name: String },
-    DeleteEdge { source: String, target: String },
+    UpsertEdge {
+        source: String,
+        target: String,
+        content: String,
+        stability: f64,
+        confidence: f64,
+        importance: f64,
+    },
+    DeleteNode {
+        name: String,
+    },
+    DeleteEdge {
+        source: String,
+        target: String,
+    },
 }
 
 fn json_str(v: &serde_json::Value, key: &str) -> Option<String> {
@@ -268,14 +307,16 @@ fn parse_single_tool(v: &serde_json::Value) -> Option<ToolCall> {
             node_type: json_str(args, "type")?,
         }),
         "upsert_edge" => Some(ToolCall::UpsertEdge {
-            source:     json_str(args, "source")?,
-            target:     json_str(args, "target")?,
-            content:    json_str(args, "content").unwrap_or_default(),
-            stability:  json_f64(args, "stability"),
+            source: json_str(args, "source")?,
+            target: json_str(args, "target")?,
+            content: json_str(args, "content").unwrap_or_default(),
+            stability: json_f64(args, "stability"),
             confidence: json_f64(args, "confidence"),
             importance: json_f64(args, "importance"),
         }),
-        "delete_node" => Some(ToolCall::DeleteNode { name: json_str(args, "name")? }),
+        "delete_node" => Some(ToolCall::DeleteNode {
+            name: json_str(args, "name")?,
+        }),
         "delete_edge" => Some(ToolCall::DeleteEdge {
             source: json_str(args, "source")?,
             target: json_str(args, "target")?,
@@ -320,9 +361,23 @@ fn execute_tool(call: ToolCall, graph: &mut Graph) -> Option<String> {
             graph.nodes.insert(name, node_type);
             None
         }
-        ToolCall::UpsertEdge { source, target, content, stability, confidence, importance } => {
+        ToolCall::UpsertEdge {
+            source,
+            target,
+            content,
+            stability,
+            confidence,
+            importance,
+        } => {
             remove_edges(&mut graph.edges, &source, &target);
-            graph.edges.push(Edge { source, target, content, stability, confidence, importance });
+            graph.edges.push(Edge {
+                source,
+                target,
+                content,
+                stability,
+                confidence,
+                importance,
+            });
             None
         }
         ToolCall::DeleteNode { name } => {
@@ -443,7 +498,11 @@ fn build_system_prompt(explanation: &str, toon: &str) -> String {
 
 // ─── HTTP ─────────────────────────────────────────────────────────────────────
 
-async fn call_ollama(model: &str, system_prompt: &str, user_prompt: &str) -> Result<LlmResponse, Box<dyn Error>> {
+async fn call_ollama(
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<LlmResponse, Box<dyn Error>> {
     let body = serde_json::json!({
         "model": model,
         "messages": [
@@ -463,10 +522,20 @@ async fn call_ollama(model: &str, system_prompt: &str, user_prompt: &str) -> Res
         .await?;
     let prompt = resp.prompt_eval_count.unwrap_or(0);
     let completion = resp.eval_count.unwrap_or(0);
-    Ok(LlmResponse { content: resp.message.content, prompt_tokens: prompt, completion_tokens: completion, cost: None })
+    Ok(LlmResponse {
+        content: resp.message.content,
+        prompt_tokens: prompt,
+        completion_tokens: completion,
+        cost: None,
+    })
 }
 
-async fn call_openrouter(api_key: &str, model: &str, system_prompt: &str, user_prompt: &str) -> Result<LlmResponse, Box<dyn Error>> {
+async fn call_openrouter(
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<LlmResponse, Box<dyn Error>> {
     let body = serde_json::json!({
         "model": model,
         "messages": [
@@ -494,10 +563,16 @@ async fn call_openrouter(api_key: &str, model: &str, system_prompt: &str, user_p
     })
 }
 
-async fn call_llm(backend: &Backend, system_prompt: &str, user_prompt: &str) -> Result<LlmResponse, Box<dyn Error>> {
+async fn call_llm(
+    backend: &Backend,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<LlmResponse, Box<dyn Error>> {
     match backend {
         Backend::Ollama { model } => call_ollama(model, system_prompt, user_prompt).await,
-        Backend::OpenRouter { api_key, model } => call_openrouter(api_key, model, system_prompt, user_prompt).await,
+        Backend::OpenRouter { api_key, model } => {
+            call_openrouter(api_key, model, system_prompt, user_prompt).await
+        }
     }
 }
 
@@ -512,8 +587,19 @@ fn normalize_response(content: &str) -> String {
 
 fn print_usage(r: &LlmResponse) {
     match r.cost {
-        Some(cost) => println!("  tokens: {}+{}={} cost: ${:.6}", r.prompt_tokens, r.completion_tokens, r.prompt_tokens + r.completion_tokens, cost),
-        None => println!("  tokens: {}+{}={}", r.prompt_tokens, r.completion_tokens, r.prompt_tokens + r.completion_tokens),
+        Some(cost) => println!(
+            "  tokens: {}+{}={} cost: ${:.6}",
+            r.prompt_tokens,
+            r.completion_tokens,
+            r.prompt_tokens + r.completion_tokens,
+            cost
+        ),
+        None => println!(
+            "  tokens: {}+{}={}",
+            r.prompt_tokens,
+            r.completion_tokens,
+            r.prompt_tokens + r.completion_tokens
+        ),
     }
 }
 
@@ -530,21 +616,29 @@ fn collect_tool_calls(raw: &str) -> Vec<ToolCall> {
 
     // Try as-is
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
-        for call in parse_tool_calls(&v) { calls.push(call); }
+        for call in parse_tool_calls(&v) {
+            calls.push(call);
+        }
         return calls;
     }
     // Try with a missing closing brace (model truncated the outer object)
     let with_brace = format!("{raw}}}");
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&with_brace) {
-        for call in parse_tool_calls(&v) { calls.push(call); }
+        for call in parse_tool_calls(&v) {
+            calls.push(call);
+        }
         return calls;
     }
     // Try each line separately (model emitted multiple JSON objects)
     for line in raw.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-            for call in parse_tool_calls(&v) { calls.push(call); }
+            for call in parse_tool_calls(&v) {
+                calls.push(call);
+            }
         }
     }
 
@@ -593,10 +687,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let user_prompt = "Mari has a cat named Whiskers. Whiskers is very playful and loves to chase laser pointers. One day, Whiskers got lost but was found by a kind stranger who returned him to Mari.";
 
     let agents = [
-        AgentDef { label: "main",        explanation: EXPLANATION,             show_reply: false },
-        AgentDef { label: "extract",     explanation: EXTRACT_EXPLANATION,     show_reply: false },
-        AgentDef { label: "rationalize", explanation: RATIONALIZE_EXPLANATION, show_reply: false },
-        AgentDef { label: "consolidate", explanation: CONSOLIDATE_EXPLANATION, show_reply: true  },
+        AgentDef {
+            label: "main",
+            explanation: EXPLANATION,
+            show_reply: false,
+        },
+        AgentDef {
+            label: "extract",
+            explanation: EXTRACT_EXPLANATION,
+            show_reply: false,
+        },
+        AgentDef {
+            label: "rationalize",
+            explanation: RATIONALIZE_EXPLANATION,
+            show_reply: false,
+        },
+        AgentDef {
+            label: "consolidate",
+            explanation: CONSOLIDATE_EXPLANATION,
+            show_reply: true,
+        },
     ];
     for def in &agents {
         run_agent(def, &backend, user_prompt, &mut graph).await?;
