@@ -99,25 +99,26 @@ fn load_toon(path: &str) -> Result<(NodeMap, Vec<Edge>), Box<dyn Error>> {
             ToonSection::None => {}
             ToonSection::Edges => {
                 let f = parse_toon_row(trimmed);
-                if f.len() < 6 {
+                if f.len() < 7 {
                     continue;
                 }
-                // alphabetical: confidence, content, importance, source, stability, target
+                // alphabetical: confidence, content, importance, source, stability, subject, target
                 edges.push(Edge {
                     confidence: f[0].parse().unwrap_or(0.0),
                     content: f[1].clone(),
                     importance: f[2].parse().unwrap_or(0.0),
                     source: f[3].clone(),
                     stability: f[4].parse().unwrap_or(0.0),
-                    target: f[5].clone(),
+                    target: f[6].clone(),
                 });
             }
             ToonSection::Nodes => {
                 let f = parse_toon_row(trimmed);
-                if f.len() < 2 {
+                if f.len() < 4 {
                     continue;
                 }
-                nodes.insert(f[0].clone(), f[1].clone());
+                // alphabetical: body, date, id, type
+                nodes.insert(f[2].clone(), f[3].clone());
             }
         }
     }
