@@ -23,6 +23,24 @@ KRATT_BACKEND=openrouter cargo run --bin kratt "your message here"
 OLLAMA_MODEL=qwen2.5:14b cargo run --bin kratt "your message here"
 ```
 
+## viz
+
+Converts a TOON graph file to GEXF, DOT, and SVG.
+
+```sh
+# convert live memory graph (default)
+cargo run --bin viz
+
+# convert a specific toon file
+cargo run --bin viz path/to/file.toon
+
+# open in gephi
+open output/kratt-graph.gexf
+
+# open rendered svg
+open output/kratt-graph.svg
+```
+
 ## graph_poc
 
 Reads `kratt-memory/` → sled → petgraph → DOT / GEXF / TOON / SVG.
