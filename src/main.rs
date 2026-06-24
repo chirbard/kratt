@@ -6,7 +6,8 @@
     clippy::too_many_lines,
     clippy::too_many_arguments,
     clippy::type_complexity,
-    clippy::wildcard_imports
+    clippy::wildcard_imports,
+    clippy::min_ident_chars,
 )]
 
 use futures_util::StreamExt;
@@ -46,7 +47,7 @@ enum Backend {
         model: String,
     },
     LlamaCpp {
-        url: String,
+        base_url: String,
         api_key: String,
         model: String,
     },
@@ -62,12 +63,12 @@ impl Backend {
                 Ok(Backend::Ollama { model })
             }
             "llamacpp" => {
-                let url = std::env::var(ENV_LLAMACPP_URL)?;
+                let base_url = std::env::var(ENV_LLAMACPP_URL)?;
                 let api_key = std::env::var(ENV_LLAMACPP_API_KEY)?;
                 let model = std::env::var(ENV_LLAMACPP_MODEL)
                     .unwrap_or_else(|_| DEFAULT_LLAMACPP_MODEL.to_string());
                 Ok(Backend::LlamaCpp {
-                    url,
+                    base_url,
                     api_key,
                     model,
                 })
@@ -194,7 +195,7 @@ fn parse_toon_row(line: &str) -> Vec<String> {
             loop {
                 match chars.next() {
                     Some('"') | None => break,
-                    Some(c) => field.push(c),
+                    Some(character) => field.push(character),
                 }
             }
             if chars.peek() == Some(&',') {
@@ -207,8 +208,8 @@ fn parse_toon_row(line: &str) -> Vec<String> {
                 match chars.peek() {
                     Some(&',') | None => break,
                     _ => {
-                        if let Some(c) = chars.next() {
-                            field.push(c);
+                        if let Some(character) = chars.next() {
+                            field.push(character);
                         }
                     }
                 }
@@ -222,34 +223,34 @@ fn parse_toon_row(line: &str) -> Vec<String> {
     fields
 }
 
-fn parse_toon_edge(f: &[String]) -> Option<Edge> {
-    if f.len() < 7 {
+fn parse_toon_edge(fields: &[String]) -> Option<Edge> {
+    if fields.len() < 7 {
         return None;
     }
     Some(Edge {
-        confidence: f[0].parse().unwrap_or(0.0),
-        content: f[1].clone(),
-        importance: f[2].parse().unwrap_or(0.0),
-        source: normalize_id(&f[3]),
-        stability: f[4].parse().unwrap_or(0.0),
-        subject: f[5] == "true",
-        target: normalize_id(&f[6]),
+        confidence: fields[0].parse().unwrap_or(0.0),
+        content: fields[1].clone(),
+        importance: fields[2].parse().unwrap_or(0.0),
+        source: normalize_id(&fields[3]),
+        stability: fields[4].parse().unwrap_or(0.0),
+        subject: fields[5] == "true",
+        target: normalize_id(&fields[6]),
     })
 }
 
-fn parse_toon_node(f: &[String]) -> Option<(String, Node)> {
-    if f.len() < 4 {
+fn parse_toon_node(fields: &[String]) -> Option<(String, Node)> {
+    if fields.len() < 4 {
         return None;
     }
     Some((
-        normalize_id(&f[2]),
-        Node { body: f[0].clone(), date: f[1].clone(), node_type: f[3].clone() },
+        normalize_id(&fields[2]),
+        Node { body: fields[0].clone(), date: fields[1].clone(), node_type: fields[3].clone() },
     ))
 }
 
 fn load_graph() -> Graph {
     let toon = match std::fs::read_to_string(TOON_PATH) {
-        Ok(s) => s,
+        Ok(toon_text) => toon_text,
         Err(_) => return Graph::new(),
     };
     let mut graph = Graph::new();
@@ -275,8 +276,8 @@ fn load_graph() -> Graph {
                 }
             }
             ToonSection::Nodes => {
-                if let Some((id, node)) = parse_toon_node(&parse_toon_row(trimmed)) {
-                    graph.nodes.insert(id, node);
+                if let Some((node_id, node)) = parse_toon_node(&parse_toon_row(trimmed)) {
+                    graph.nodes.insert(node_id, node);
                 }
             }
         }
@@ -290,7 +291,7 @@ fn graph_to_json(graph: &Graph) -> serde_json::Value {
     let mut nodes_json: Vec<serde_json::Value> = Vec::new();
     for name in &node_names {
         let node = match graph.nodes.get(*name) {
-            Some(n) => n,
+            Some(node) => node,
             None => continue,
         };
         nodes_json.push(serde_json::json!({
@@ -301,15 +302,15 @@ fn graph_to_json(graph: &Graph) -> serde_json::Value {
         }));
     }
     let mut edges_json: Vec<serde_json::Value> = Vec::new();
-    for e in &graph.edges {
+    for edge in &graph.edges {
         edges_json.push(serde_json::json!({
-            "confidence": e.confidence,
-            "content": e.content,
-            "importance": e.importance,
-            "source": e.source,
-            "stability": e.stability,
-            "subject": e.subject,
-            "target": e.target,
+            "confidence": edge.confidence,
+            "content": edge.content,
+            "importance": edge.importance,
+            "source": edge.source,
+            "stability": edge.stability,
+            "subject": edge.subject,
+            "target": edge.target,
         }));
     }
     serde_json::json!({ "nodes": nodes_json, "edges": edges_json })
@@ -393,32 +394,32 @@ enum ToolCall {
     },
 }
 
-fn json_str(v: &serde_json::Value, key: &str) -> Option<String> {
-    if let Some(val) = v.get(key)
-        && let Some(s) = val.as_str()
+fn json_str(json: &serde_json::Value, field_name: &str) -> Option<String> {
+    if let Some(field_value) = json.get(field_name)
+        && let Some(text_value) = field_value.as_str()
     {
-        return Some(s.to_string());
+        return Some(text_value.to_string());
     }
     None
 }
 
-fn json_f64(v: &serde_json::Value, key: &str) -> f64 {
-    match v.get(key) {
-        Some(val) => val.as_f64().unwrap_or(0.0),
+fn json_f64(json: &serde_json::Value, field_name: &str) -> f64 {
+    match json.get(field_name) {
+        Some(field_value) => field_value.as_f64().unwrap_or(0.0),
         None => 0.0,
     }
 }
 
-fn json_bool(v: &serde_json::Value, key: &str) -> bool {
-    match v.get(key) {
-        Some(val) => val.as_bool().unwrap_or(false),
+fn json_bool(json: &serde_json::Value, field_name: &str) -> bool {
+    match json.get(field_name) {
+        Some(field_value) => field_value.as_bool().unwrap_or(false),
         None => false,
     }
 }
 
-fn parse_single_tool(v: &serde_json::Value) -> Option<ToolCall> {
-    let tool = v.get("tool")?.as_str()?;
-    let args = v.get("arguments")?;
+fn parse_single_tool(json: &serde_json::Value) -> Option<ToolCall> {
+    let tool = json.get("tool")?.as_str()?;
+    let args = json.get("arguments")?;
     match tool {
         "respond" => Some(ToolCall::Respond(json_str(args, "text")?)),
         "upsert_node" => Some(ToolCall::UpsertNode {
@@ -447,11 +448,11 @@ fn parse_single_tool(v: &serde_json::Value) -> Option<ToolCall> {
     }
 }
 
-fn parse_tool_calls(v: &serde_json::Value) -> Vec<ToolCall> {
+fn parse_tool_calls(json: &serde_json::Value) -> Vec<ToolCall> {
     let mut calls = Vec::new();
-    if let Some(tools) = v.get("tools") {
-        if let Some(arr) = tools.as_array() {
-            for item in arr {
+    if let Some(tools) = json.get("tools") {
+        if let Some(tool_array) = tools.as_array() {
+            for item in tool_array {
                 if let Some(call) = parse_single_tool(item) {
                     calls.push(call);
                 }
@@ -459,14 +460,14 @@ fn parse_tool_calls(v: &serde_json::Value) -> Vec<ToolCall> {
         }
         return calls;
     }
-    if let Some(call) = parse_single_tool(v) {
+    if let Some(call) = parse_single_tool(json) {
         calls.push(call);
     }
     calls
 }
 
-fn normalize_id(s: &str) -> String {
-    s.trim().to_lowercase().replace(' ', "-")
+fn normalize_id(input: &str) -> String {
+    input.trim().to_lowercase().replace(' ', "-")
 }
 
 fn remove_edges(edges: &mut Vec<Edge>, source: &str, target: &str) {
@@ -670,16 +671,16 @@ fn today_iso() -> String {
     let days = (secs / 86400) as i64;
     // Howard Hinnant civil_from_days
     let z = days + 719468;
-    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}")
+    let civil_era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let day_of_era = z - civil_era * 146097;
+    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36524 - day_of_era / 146096) / 365;
+    let y = year_of_era + civil_era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = if month_prime < 10 { month_prime + 3 } else { month_prime - 9 };
+    let y = if month <= 2 { y + 1 } else { y };
+    format!("{y:04}-{month:02}-{day:02}")
 }
 
 fn build_system_prompt(explanation: &str, toon: &str) -> String {
@@ -711,9 +712,9 @@ fn timing_secs(
     t_end: std::time::Instant,
 ) -> (f64, f64) {
     match t_first {
-        Some(t) => (
-            t.duration_since(t_start).as_secs_f64(),
-            t_end.duration_since(t).as_secs_f64(),
+        Some(first_instant) => (
+            first_instant.duration_since(t_start).as_secs_f64(),
+            t_end.duration_since(first_instant).as_secs_f64(),
         ),
         None => (0.0, 0.0),
     }
@@ -722,7 +723,7 @@ fn timing_secs(
 fn apply_openai_chunk(
     chunk: OpenAiChunk,
     content: &mut String,
-    n: &mut u32,
+    token_count: &mut u32,
     t_first: &mut Option<std::time::Instant>,
 ) {
     for choice in chunk.choices {
@@ -733,8 +734,8 @@ fn apply_openai_chunk(
                 *t_first = Some(std::time::Instant::now());
             }
             content.push_str(&text);
-            *n += 1;
-            eprint!("\r  {n} tok");
+            *token_count += 1;
+            eprint!("\r  {token_count} tok");
         }
     }
 }
@@ -757,17 +758,17 @@ async fn stream_ollama(
     let response = reqwest::Client::new().post(URL_OLLAMA).json(&body).send().await?;
     let t_start = std::time::Instant::now();
     let mut byte_stream = response.bytes_stream();
-    let mut buf = String::new();
+    let mut line_buffer = String::new();
     let mut content = String::new();
-    let mut n = 0u32;
+    let mut token_count = 0u32;
     let mut prompt_tokens = 0u32;
     let mut completion_tokens = 0u32;
     let mut t_first: Option<std::time::Instant> = None;
     while let Some(item) = byte_stream.next().await {
-        buf.push_str(&String::from_utf8_lossy(&item?));
-        while let Some(nl) = buf.find('\n') {
-            let line = buf[..nl].trim().to_string();
-            buf = buf[nl + 1..].to_string();
+        line_buffer.push_str(&String::from_utf8_lossy(&item?));
+        while let Some(newline_pos) = line_buffer.find('\n') {
+            let line = line_buffer[..newline_pos].trim().to_string();
+            line_buffer = line_buffer[newline_pos + 1..].to_string();
             if line.is_empty() {
                 continue;
             }
@@ -780,8 +781,8 @@ async fn stream_ollama(
                 if t_first.is_none() {
                     t_first = Some(std::time::Instant::now());
                 }
-                n += 1;
-                eprint!("\r  {n} tok");
+                token_count += 1;
+                eprint!("\r  {token_count} tok");
             }
         }
     }
@@ -796,29 +797,29 @@ async fn parse_openai_sse_stream(
 ) -> Result<LlmResponse, Box<dyn Error>> {
     let t_start = std::time::Instant::now();
     let mut byte_stream = response.bytes_stream();
-    let mut buf = String::new();
+    let mut line_buffer = String::new();
     let mut content = String::new();
-    let mut n = 0u32;
+    let mut token_count = 0u32;
     let mut prompt_tokens = 0u32;
     let mut completion_tokens = 0u32;
     let mut cost: Option<f64> = None;
     let mut t_first: Option<std::time::Instant> = None;
     while let Some(item) = byte_stream.next().await {
-        buf.push_str(&String::from_utf8_lossy(&item?));
-        while let Some(nl) = buf.find('\n') {
-            let line = buf[..nl].trim().to_string();
-            buf = buf[nl + 1..].to_string();
+        line_buffer.push_str(&String::from_utf8_lossy(&item?));
+        while let Some(newline_pos) = line_buffer.find('\n') {
+            let line = line_buffer[..newline_pos].trim().to_string();
+            line_buffer = line_buffer[newline_pos + 1..].to_string();
             let Some(data) = line.strip_prefix("data: ") else { continue };
             if data == "[DONE]" {
                 continue;
             }
             let Ok(chunk) = serde_json::from_str::<OpenAiChunk>(data) else { continue };
-            if let Some(ref u) = chunk.usage {
-                prompt_tokens = u.prompt_tokens;
-                completion_tokens = u.completion_tokens;
-                cost = u.cost;
+            if let Some(ref usage_data) = chunk.usage {
+                prompt_tokens = usage_data.prompt_tokens;
+                completion_tokens = usage_data.completion_tokens;
+                cost = usage_data.cost;
             }
-            apply_openai_chunk(chunk, &mut content, &mut n, &mut t_first);
+            apply_openai_chunk(chunk, &mut content, &mut token_count, &mut t_first);
         }
     }
     clear_tok_line();
@@ -855,13 +856,13 @@ async fn stream_openrouter(
 }
 
 async fn stream_llamacpp(
-    url: &str,
+    base_url: &str,
     api_key: &str,
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
 ) -> Result<LlmResponse, Box<dyn Error>> {
-    let endpoint = format!("{url}/v1/chat/completions");
+    let endpoint = format!("{base_url}/v1/chat/completions");
     let body = serde_json::json!({
         "model": model,
         "messages": [
@@ -890,27 +891,27 @@ async fn call_llm(
         Backend::OpenRouter { api_key, model } => {
             stream_openrouter(api_key, model, system_prompt, user_prompt).await
         }
-        Backend::LlamaCpp { url, api_key, model } => {
-            stream_llamacpp(url, api_key, model, system_prompt, user_prompt).await
+        Backend::LlamaCpp { base_url, api_key, model } => {
+            stream_llamacpp(base_url, api_key, model, system_prompt, user_prompt).await
         }
     }
 }
 
-fn strip_fences(s: &str) -> &str {
-    let s = s.trim();
-    let s = if let Some(rest) = s.strip_prefix("```json") {
+fn strip_fences(text: &str) -> &str {
+    let text = text.trim();
+    let text = if let Some(rest) = text.strip_prefix("```json") {
         rest
-    } else if let Some(rest) = s.strip_prefix("```") {
+    } else if let Some(rest) = text.strip_prefix("```") {
         rest
     } else {
-        s
+        text
     };
-    let s = if let Some(inner) = s.strip_suffix("```") {
+    let text = if let Some(inner) = text.strip_suffix("```") {
         inner
     } else {
-        s
+        text
     };
-    s.trim()
+    text.trim()
 }
 
 fn normalize_response(content: &str) -> String {
@@ -928,29 +929,29 @@ async fn fix_json(backend: &Backend, broken: &str) -> Result<String, Box<dyn Err
     Ok(normalize_response(&response.content))
 }
 
-fn print_usage(r: &LlmResponse) {
-    let tps = if r.gen_secs > 0.0 {
-        r.completion_tokens as f64 / r.gen_secs
+fn print_usage(response: &LlmResponse) {
+    let tokens_per_sec = if response.gen_secs > 0.0 {
+        response.completion_tokens as f64 / response.gen_secs
     } else {
         0.0
     };
-    match r.cost {
+    match response.cost {
         Some(cost) => println!(
             "  tokens: {}+{}={}  ttft: {:.2}s  {:.1}tok/s  cost: ${:.6}",
-            r.prompt_tokens,
-            r.completion_tokens,
-            r.prompt_tokens + r.completion_tokens,
-            r.ttft,
-            tps,
+            response.prompt_tokens,
+            response.completion_tokens,
+            response.prompt_tokens + response.completion_tokens,
+            response.ttft,
+            tokens_per_sec,
             cost
         ),
         None => println!(
             "  tokens: {}+{}={}  ttft: {:.2}s  {:.1}tok/s",
-            r.prompt_tokens,
-            r.completion_tokens,
-            r.prompt_tokens + r.completion_tokens,
-            r.ttft,
-            tps
+            response.prompt_tokens,
+            response.completion_tokens,
+            response.prompt_tokens + response.completion_tokens,
+            response.ttft,
+            tokens_per_sec
         ),
     }
 }
@@ -963,32 +964,32 @@ struct AgentDef {
     show_reply: bool,
 }
 
-fn collect_tool_calls(raw: &str) -> Vec<ToolCall> {
+fn collect_tool_calls(llm_output: &str) -> Vec<ToolCall> {
     let mut calls = Vec::new();
 
     // Try as-is
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
-        for call in parse_tool_calls(&v) {
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(llm_output) {
+        for call in parse_tool_calls(&parsed) {
             calls.push(call);
         }
         return calls;
     }
     // Try with a missing closing brace (model truncated the outer object)
-    let with_brace = format!("{raw}}}");
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&with_brace) {
-        for call in parse_tool_calls(&v) {
+    let with_brace = format!("{llm_output}}}");
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&with_brace) {
+        for call in parse_tool_calls(&parsed) {
             calls.push(call);
         }
         return calls;
     }
     // Try each line separately (model emitted multiple JSON objects)
-    for line in raw.lines() {
+    for line in llm_output.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-            for call in parse_tool_calls(&v) {
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) {
+            for call in parse_tool_calls(&parsed) {
                 calls.push(call);
             }
         }
@@ -998,20 +999,20 @@ fn collect_tool_calls(raw: &str) -> Vec<ToolCall> {
 }
 
 async fn run_agent(
-    def: &AgentDef,
+    agent_def: &AgentDef,
     backend: &Backend,
     user_message: &str,
     graph: &mut Graph,
 ) -> Result<(), Box<dyn Error>> {
-    println!("\n[{}]", def.label);
+    println!("\n[{}]", agent_def.label);
     let toon = toon::encode(&graph_to_json(graph), None);
-    let system = build_system_prompt(def.explanation, &toon);
+    let system = build_system_prompt(agent_def.explanation, &toon);
     let response = call_llm(backend, &system, user_message).await?;
-    let raw = normalize_response(&response.content);
-    let mut calls = collect_tool_calls(&raw);
+    let normalized_response = normalize_response(&response.content);
+    let mut calls = collect_tool_calls(&normalized_response);
     if calls.is_empty() {
         eprintln!("  json parse failed, retrying with fixer");
-        match fix_json(backend, &raw).await {
+        match fix_json(backend, &normalized_response).await {
             Ok(fixed) => {
                 calls = collect_tool_calls(&fixed);
                 if calls.is_empty() {
@@ -1019,19 +1020,19 @@ async fn run_agent(
                     println!("  {fixed}");
                 }
             }
-            Err(e) => eprintln!("  fixer error: {e}"),
+            Err(err) => eprintln!("  fixer error: {err}"),
         }
     }
     if !calls.is_empty() {
         for call in calls {
             if let Some(text) = execute_tool(call, graph)
-                && def.show_reply
+                && agent_def.show_reply
             {
                 println!("\n{text}");
             }
         }
         save_graph(graph)?;
-        git_commit(def.label)?;
+        git_commit(agent_def.label)?;
     }
     print_usage(&response);
     Ok(())
@@ -1049,7 +1050,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut graph = load_graph();
 
     let user_prompt = match std::env::args().nth(1) {
-        Some(arg) => arg,
+        Some(cli_arg) => cli_arg,
         None => {
             println!("waiting for input...");
             let mut line = String::new();
@@ -1085,8 +1086,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             show_reply: true,
         },
     ];
-    for def in &agents {
-        run_agent(def, &backend, &user_prompt, &mut graph).await?;
+    for agent_def in &agents {
+        run_agent(agent_def, &backend, &user_prompt, &mut graph).await?;
     }
 
     Ok(())
