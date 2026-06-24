@@ -11,6 +11,7 @@
 | `LLAMACPP_URL`       | required                     | base URL of the llama.cpp server     |
 | `LLAMACPP_API_KEY`   | required                     | API key for the llama.cpp server     |
 | `LLAMACPP_MODEL`     | `default`                    | model name to pass to llama.cpp      |
+| `LLAMACPP_MAX_TOKENS` | `8192`                      | max output tokens (caps reasoning runaway) |
 | `KRATT_DEBUG`        | off                          | set to any value to log raw SSE stream |
 
 ```sh

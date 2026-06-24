@@ -170,7 +170,7 @@ async fn collect_with_retry(backend: &Backend, normalized_response: &str) -> Vec
                 calls = collect_tool_calls(&fixed);
                 if calls.is_empty() {
                     eprintln!("  fixer also failed — skipping");
-                    println!("  {fixed}");
+                    eprintln!("  {fixed}");
                 }
             }
             Err(err) => eprintln!("  fixer error: {err}"),

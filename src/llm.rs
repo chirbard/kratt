@@ -9,11 +9,13 @@ const ENV_OPENROUTER_MODEL: &str = "OPENROUTER_MODEL";
 const ENV_LLAMACPP_URL: &str = "LLAMACPP_URL";
 const ENV_LLAMACPP_API_KEY: &str = "LLAMACPP_API_KEY";
 const ENV_LLAMACPP_MODEL: &str = "LLAMACPP_MODEL";
+const ENV_LLAMACPP_MAX_TOKENS: &str = "LLAMACPP_MAX_TOKENS";
 
 const DEFAULT_BACKEND: &str = "ollama";
 const DEFAULT_OLLAMA_MODEL: &str = "lfm2.5";
 const DEFAULT_OPENROUTER_MODEL: &str = "deepseek/deepseek-v4-flash";
 const DEFAULT_LLAMACPP_MODEL: &str = "default";
+const DEFAULT_LLAMACPP_MAX_TOKENS: u32 = 8192;
 const OLLAMA_NUM_CTX: u32 = 16384;
 
 const URL_OPENROUTER: &str = "https://openrouter.ai/api/v1/chat/completions";
@@ -173,12 +175,12 @@ async fn stream_ollama(
         "format": "json",
         "options": { "num_ctx": OLLAMA_NUM_CTX },
     });
+    let t_start = std::time::Instant::now();
     let response = reqwest::Client::new().post(URL_OLLAMA).json(&body).send().await?;
-    parse_ollama_stream(response).await
+    parse_ollama_stream(response, t_start).await
 }
 
-async fn parse_ollama_stream(response: reqwest::Response) -> Result<LlmResponse, Box<dyn Error>> {
-    let t_start = std::time::Instant::now();
+async fn parse_ollama_stream(response: reqwest::Response, t_start: std::time::Instant) -> Result<LlmResponse, Box<dyn Error>> {
     let mut byte_stream = response.bytes_stream();
     let mut line_buffer = String::new();
     let mut content = String::new();
@@ -216,8 +218,8 @@ async fn parse_ollama_stream(response: reqwest::Response) -> Result<LlmResponse,
 async fn parse_openai_sse_stream(
     response: reqwest::Response,
     prepend: &str,
+    t_start: std::time::Instant,
 ) -> Result<LlmResponse, Box<dyn Error>> {
-    let t_start = std::time::Instant::now();
     let debug = std::env::var("KRATT_DEBUG").is_ok();
     let mut byte_stream = response.bytes_stream();
     let mut line_buffer = String::new();
@@ -262,13 +264,14 @@ async fn post_openai_compat(
     body: serde_json::Value,
     prepend: &str,
 ) -> Result<LlmResponse, Box<dyn Error>> {
+    let t_start = std::time::Instant::now();
     let response = reqwest::Client::new()
         .post(url)
         .header("Authorization", format!("Bearer {api_key}"))
         .json(&body)
         .send()
         .await?;
-    parse_openai_sse_stream(response, prepend).await
+    parse_openai_sse_stream(response, prepend, t_start).await
 }
 
 async fn stream_openrouter(
@@ -299,6 +302,11 @@ async fn stream_llamacpp(
     user_prompt: &str,
 ) -> Result<LlmResponse, Box<dyn Error>> {
     let endpoint = format!("{base_url}/v1/chat/completions");
+    let max_tokens = if let Ok(val) = std::env::var(ENV_LLAMACPP_MAX_TOKENS) {
+        val.parse::<u32>().unwrap_or(DEFAULT_LLAMACPP_MAX_TOKENS)
+    } else {
+        DEFAULT_LLAMACPP_MAX_TOKENS
+    };
     let body = serde_json::json!({
         "model": model,
         "messages": [
@@ -307,6 +315,7 @@ async fn stream_llamacpp(
         ],
         "stream": true,
         "stream_options": { "include_usage": true },
+        "max_tokens": max_tokens,
     });
     post_openai_compat(&endpoint, api_key, body, "").await
 }
