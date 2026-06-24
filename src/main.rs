@@ -20,10 +20,14 @@ const ENV_BACKEND: &str = "KRATT_BACKEND";
 const ENV_OLLAMA_MODEL: &str = "OLLAMA_MODEL";
 const ENV_OPENROUTER_API_KEY: &str = "OPENROUTER_API_KEY";
 const ENV_OPENROUTER_MODEL: &str = "OPENROUTER_MODEL";
+const ENV_LLAMACPP_URL: &str = "LLAMACPP_URL";
+const ENV_LLAMACPP_API_KEY: &str = "LLAMACPP_API_KEY";
+const ENV_LLAMACPP_MODEL: &str = "LLAMACPP_MODEL";
 
 const DEFAULT_BACKEND: &str = "ollama";
-const DEFAULT_OLLAMA_MODEL: &str = "gemma4:e4b";
+const DEFAULT_OLLAMA_MODEL: &str = "lfm2.5";
 const DEFAULT_OPENROUTER_MODEL: &str = "deepseek/deepseek-v4-flash";
+const DEFAULT_LLAMACPP_MODEL: &str = "default";
 const OLLAMA_NUM_CTX: u32 = 16384;
 
 const URL_OPENROUTER: &str = "https://openrouter.ai/api/v1/chat/completions";
@@ -33,8 +37,18 @@ const DATA_DIR: &str = "kratt-data";
 const TOON_PATH: &str = "kratt-data/kratt-graph.toon";
 
 enum Backend {
-    OpenRouter { api_key: String, model: String },
-    Ollama { model: String },
+    OpenRouter {
+        api_key: String,
+        model: String,
+    },
+    Ollama {
+        model: String,
+    },
+    LlamaCpp {
+        url: String,
+        api_key: String,
+        model: String,
+    },
 }
 
 impl Backend {
@@ -45,6 +59,17 @@ impl Backend {
                 let model = std::env::var(ENV_OLLAMA_MODEL)
                     .unwrap_or_else(|_| DEFAULT_OLLAMA_MODEL.to_string());
                 Ok(Backend::Ollama { model })
+            }
+            "llamacpp" => {
+                let url = std::env::var(ENV_LLAMACPP_URL)?;
+                let api_key = std::env::var(ENV_LLAMACPP_API_KEY)?;
+                let model = std::env::var(ENV_LLAMACPP_MODEL)
+                    .unwrap_or_else(|_| DEFAULT_LLAMACPP_MODEL.to_string());
+                Ok(Backend::LlamaCpp {
+                    url,
+                    api_key,
+                    model,
+                })
             }
             _ => {
                 let api_key = std::env::var(ENV_OPENROUTER_API_KEY)?;
@@ -59,6 +84,7 @@ impl Backend {
         match self {
             Backend::OpenRouter { model, .. } => model,
             Backend::Ollama { model } => model,
+            Backend::LlamaCpp { model, .. } => model,
         }
     }
 }
@@ -69,7 +95,8 @@ impl Backend {
 #[derive(Deserialize)]
 struct OpenAiResponse {
     choices: Vec<OpenAiChoice>,
-    usage: OpenAiUsage,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
 }
 
 #[derive(Deserialize)]
@@ -235,7 +262,11 @@ fn load_graph() -> Graph {
                 // TOON node columns alphabetically: body, date, id, type
                 graph.nodes.insert(
                     normalize_id(&f[2]),
-                    Node { body: f[0].clone(), date: f[1].clone(), node_type: f[3].clone() },
+                    Node {
+                        body: f[0].clone(),
+                        date: f[1].clone(),
+                        node_type: f[3].clone(),
+                    },
                 );
             }
         }
@@ -442,8 +473,20 @@ fn remove_edges(edges: &mut Vec<Edge>, source: &str, target: &str) {
 fn execute_tool(call: ToolCall, graph: &mut Graph) -> Option<String> {
     match call {
         ToolCall::Respond(text) => Some(text),
-        ToolCall::UpsertNode { name, node_type, body, date } => {
-            graph.nodes.insert(normalize_id(&name), Node { node_type, body, date });
+        ToolCall::UpsertNode {
+            name,
+            node_type,
+            body,
+            date,
+        } => {
+            graph.nodes.insert(
+                normalize_id(&name),
+                Node {
+                    node_type,
+                    body,
+                    date,
+                },
+            );
             None
         }
         ToolCall::UpsertEdge {
@@ -458,7 +501,15 @@ fn execute_tool(call: ToolCall, graph: &mut Graph) -> Option<String> {
             let source = normalize_id(&source);
             let target = normalize_id(&target);
             remove_edges(&mut graph.edges, &source, &target);
-            graph.edges.push(Edge { source, target, content, stability, confidence, importance, subject });
+            graph.edges.push(Edge {
+                source,
+                target,
+                content,
+                stability,
+                confidence,
+                importance,
+                subject,
+            });
             None
         }
         ToolCall::DeleteNode { name } => {
@@ -475,7 +526,11 @@ fn execute_tool(call: ToolCall, graph: &mut Graph) -> Option<String> {
             None
         }
         ToolCall::DeleteEdge { source, target } => {
-            remove_edges(&mut graph.edges, &normalize_id(&source), &normalize_id(&target));
+            remove_edges(
+                &mut graph.edges,
+                &normalize_id(&source),
+                &normalize_id(&target),
+            );
             None
         }
     }
@@ -712,11 +767,57 @@ async fn call_openrouter(
     let Some(choice) = resp.choices.into_iter().next() else {
         return Err("no choices in response".into());
     };
+    let (prompt_tokens, completion_tokens, cost) = match resp.usage {
+        Some(u) => (u.prompt_tokens, u.completion_tokens, u.cost),
+        None => (0, 0, None),
+    };
     Ok(LlmResponse {
         content: choice.message.content,
-        prompt_tokens: resp.usage.prompt_tokens,
-        completion_tokens: resp.usage.completion_tokens,
-        cost: resp.usage.cost,
+        prompt_tokens,
+        completion_tokens,
+        cost,
+    })
+}
+
+async fn call_llamacpp(
+    url: &str,
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<LlmResponse, Box<dyn Error>> {
+    let endpoint = format!("{url}/v1/chat/completions");
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user",   "content": user_prompt },
+        ],
+    });
+    let raw = reqwest::Client::new()
+        .post(&endpoint)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await?
+        .text()
+        .await?;
+    let resp: OpenAiResponse = match serde_json::from_str(&raw) {
+        Ok(r) => r,
+        Err(e) => return Err(format!("llamacpp parse error: {e}\nraw: {raw}").into()),
+    };
+    let Some(choice) = resp.choices.into_iter().next() else {
+        return Err(format!("no choices in llamacpp response\nraw: {raw}").into());
+    };
+    let (prompt_tokens, completion_tokens, cost) = match resp.usage {
+        Some(u) => (u.prompt_tokens, u.completion_tokens, u.cost),
+        None => (0, 0, None),
+    };
+    Ok(LlmResponse {
+        content: choice.message.content,
+        prompt_tokens,
+        completion_tokens,
+        cost,
     })
 }
 
@@ -730,6 +831,11 @@ async fn call_llm(
         Backend::OpenRouter { api_key, model } => {
             call_openrouter(api_key, model, system_prompt, user_prompt).await
         }
+        Backend::LlamaCpp {
+            url,
+            api_key,
+            model,
+        } => call_llamacpp(url, api_key, model, system_prompt, user_prompt).await,
     }
 }
 
@@ -765,20 +871,27 @@ async fn fix_json(backend: &Backend, broken: &str) -> Result<String, Box<dyn Err
     Ok(normalize_response(&response.content))
 }
 
-fn print_usage(r: &LlmResponse) {
+fn print_usage(r: &LlmResponse, elapsed: f64) {
+    let tps = if elapsed > 0.0 {
+        r.completion_tokens as f64 / elapsed
+    } else {
+        0.0
+    };
     match r.cost {
         Some(cost) => println!(
-            "  tokens: {}+{}={} cost: ${:.6}",
+            "  tokens: {}+{}={} {:.1}tok/s cost: ${:.6}",
             r.prompt_tokens,
             r.completion_tokens,
             r.prompt_tokens + r.completion_tokens,
+            tps,
             cost
         ),
         None => println!(
-            "  tokens: {}+{}={}",
+            "  tokens: {}+{}={} {:.1}tok/s",
             r.prompt_tokens,
             r.completion_tokens,
-            r.prompt_tokens + r.completion_tokens
+            r.prompt_tokens + r.completion_tokens,
+            tps
         ),
     }
 }
@@ -834,7 +947,9 @@ async fn run_agent(
     println!("\n[{}]", def.label);
     let toon = toon::encode(&graph_to_json(graph), None);
     let system = build_system_prompt(def.explanation, &toon);
+    let t0 = std::time::Instant::now();
     let response = call_llm(backend, &system, user_message).await?;
+    let elapsed = t0.elapsed().as_secs_f64();
     let raw = normalize_response(&response.content);
     let mut calls = collect_tool_calls(&raw);
     if calls.is_empty() {
@@ -861,7 +976,7 @@ async fn run_agent(
         save_graph(graph)?;
         git_commit(def.label)?;
     }
-    print_usage(&response);
+    print_usage(&response, elapsed);
     Ok(())
 }
 
