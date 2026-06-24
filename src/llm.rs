@@ -83,6 +83,8 @@ struct OpenAiChunkChoice {
 struct OpenAiDelta {
     #[serde(default)]
     content: Option<String>,
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -113,6 +115,7 @@ fn clear_tok_line() {
     eprint!("\r                    \r");
 }
 
+
 fn timing_secs(
     t_start: std::time::Instant,
     t_first: Option<std::time::Instant>,
@@ -134,6 +137,14 @@ fn apply_openai_chunk(
     t_first: &mut Option<std::time::Instant>,
 ) {
     for choice in chunk.choices {
+        let reasoning = choice.delta.reasoning_content.as_deref().unwrap_or("");
+        if !reasoning.is_empty() {
+            if t_first.is_none() {
+                *t_first = Some(std::time::Instant::now());
+            }
+            *token_count += 1;
+            eprint!("\r  {token_count} thinking");
+        }
         if let Some(text) = choice.delta.content
             && !text.is_empty()
         {
@@ -207,6 +218,7 @@ async fn parse_openai_sse_stream(
     prepend: &str,
 ) -> Result<LlmResponse, Box<dyn Error>> {
     let t_start = std::time::Instant::now();
+    let debug = std::env::var("KRATT_DEBUG").is_ok();
     let mut byte_stream = response.bytes_stream();
     let mut line_buffer = String::new();
     let mut content = String::new();
@@ -220,6 +232,9 @@ async fn parse_openai_sse_stream(
         while let Some(newline_pos) = line_buffer.find('\n') {
             let line = line_buffer[..newline_pos].trim().to_string();
             line_buffer = line_buffer[newline_pos + 1..].to_string();
+            if debug && !line.is_empty() {
+                eprintln!("  [debug] {:.2}s  {line}", t_start.elapsed().as_secs_f64());
+            }
             let Some(data) = line.strip_prefix("data: ") else { continue };
             if data == "[DONE]" {
                 continue;
@@ -274,6 +289,7 @@ async fn stream_openrouter(
     });
     post_openai_compat(URL_OPENROUTER, api_key, body, "{").await
 }
+
 
 async fn stream_llamacpp(
     base_url: &str,

@@ -2,12 +2,16 @@
 
 ## env vars
 
-| var                  | default                      | description               |
-| -------------------- | ---------------------------- | ------------------------- |
-| `KRATT_BACKEND`      | `ollama`                     | `ollama` or `openrouter`  |
-| `OLLAMA_MODEL`       | `gemma4:e4b`                 | model name for Ollama     |
-| `OPENROUTER_API_KEY` | required                     | API key for OpenRouter    |
-| `OPENROUTER_MODEL`   | `deepseek/deepseek-v4-flash` | model name for OpenRouter |
+| var                  | default                      | description                          |
+| -------------------- | ---------------------------- | ------------------------------------ |
+| `KRATT_BACKEND`      | `ollama`                     | `ollama`, `openrouter`, or `llamacpp` |
+| `OLLAMA_MODEL`       | `lfm2.5`                     | model name for Ollama                |
+| `OPENROUTER_API_KEY` | required                     | API key for OpenRouter               |
+| `OPENROUTER_MODEL`   | `deepseek/deepseek-v4-flash` | model name for OpenRouter            |
+| `LLAMACPP_URL`       | required                     | base URL of the llama.cpp server     |
+| `LLAMACPP_API_KEY`   | required                     | API key for the llama.cpp server     |
+| `LLAMACPP_MODEL`     | `default`                    | model name to pass to llama.cpp      |
+| `KRATT_DEBUG`        | off                          | set to any value to log raw SSE stream |
 
 ```sh
 # pass prompt as argument
@@ -21,6 +25,19 @@ KRATT_BACKEND=openrouter cargo run --bin kratt "your message here"
 
 # run with a different ollama model
 OLLAMA_MODEL=qwen2.5:14b cargo run --bin kratt "your message here"
+
+# run with llama.cpp
+KRATT_BACKEND=llamacpp LLAMACPP_URL=http://localhost:8080 LLAMACPP_API_KEY=none cargo run --bin kratt "your message here"
+```
+
+## debug
+
+```sh
+# save output and debug log to separate files
+cargo run --bin kratt "prompt" > >(tee output.log) 2> debug.log
+
+# with raw SSE stream logging
+KRATT_DEBUG=1 cargo run --bin kratt "prompt" > >(tee output.log) 2> debug.log
 ```
 
 ## viz
