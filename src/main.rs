@@ -587,7 +587,7 @@ const MEMORY_RULES: &str = r#"## Memory rules
 
 **Node types**
 - entity — a person, place, technology, or named concept. Body and date are always empty.
-- fact — one atomic claim. Body is exactly one sentence, no trailing period. Date is when the event occurred (YYYY-MM-DD), or empty if unknown.
+- fact — one atomic claim. Body is exactly one sentence, no trailing period. Date is when the event occurred (YYYY-MM-DD), or empty if unknown. Use today's date for events happening now. Resolve relative dates ("yesterday", "last Monday", "two weeks ago") to an actual YYYY-MM-DD using the date provided above. Never store "last Monday" or similar as an entity node — compute the date instead.
 
 **Direct link vs fact node**
 Use a direct edge on an entity node for simple relationships. Create a fact node only when the claim needs its own sentence — attribution, uncertainty, temporal context, or multiple entities involved.
@@ -615,9 +615,33 @@ Example: `"<subject> works as <target>"`, `"<subject> has <fact>"`
 
 **Taxonomy links must chain.** Link entities through every level of category so unrelated nodes can connect through shared concepts."#;
 
+fn today_iso() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days = (secs / 86400) as i64;
+    // Howard Hinnant civil_from_days
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
 fn build_system_prompt(explanation: &str, toon: &str) -> String {
     let mut prompt = String::new();
     prompt.push_str(explanation);
+    prompt.push_str("\n\n**Today's date: ");
+    prompt.push_str(&today_iso());
+    prompt.push_str("**");
     prompt.push_str("\n\n");
     prompt.push_str(JSON_OUTPUT_RULES);
     prompt.push_str("\n\n");
