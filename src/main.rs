@@ -9,6 +9,7 @@
     clippy::wildcard_imports
 )]
 
+use futures_util::StreamExt;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::error::Error;
@@ -91,24 +92,7 @@ impl Backend {
 
 // ─── API response types ───────────────────────────────────────────────────────
 
-// OpenRouter / OpenAI-compatible
-#[derive(Deserialize)]
-struct OpenAiResponse {
-    choices: Vec<OpenAiChoice>,
-    #[serde(default)]
-    usage: Option<OpenAiUsage>,
-}
-
-#[derive(Deserialize)]
-struct OpenAiChoice {
-    message: OpenAiMessage,
-}
-
-#[derive(Deserialize)]
-struct OpenAiMessage {
-    content: String,
-}
-
+// Shared usage (OpenAI-compat)
 #[derive(Deserialize)]
 struct OpenAiUsage {
     prompt_tokens: u32,
@@ -117,19 +101,39 @@ struct OpenAiUsage {
     cost: Option<f64>,
 }
 
-// Ollama native /api/chat
+// OpenAI SSE streaming
 #[derive(Deserialize)]
-struct OllamaResponse {
+struct OpenAiChunk {
+    choices: Vec<OpenAiChunkChoice>,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiChunkChoice {
+    delta: OpenAiDelta,
+}
+
+#[derive(Deserialize)]
+struct OpenAiDelta {
+    #[serde(default)]
+    content: Option<String>,
+}
+
+// Ollama streaming
+#[derive(Deserialize)]
+struct OllamaMessage {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct OllamaChunk {
     message: OllamaMessage,
+    done: bool,
     #[serde(default)]
     prompt_eval_count: Option<u32>,
     #[serde(default)]
     eval_count: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct OllamaMessage {
-    content: String,
 }
 
 // Unified response used through the rest of the code
@@ -216,6 +220,31 @@ fn parse_toon_row(line: &str) -> Vec<String> {
     fields
 }
 
+fn parse_toon_edge(f: &[String]) -> Option<Edge> {
+    if f.len() < 7 {
+        return None;
+    }
+    Some(Edge {
+        confidence: f[0].parse().unwrap_or(0.0),
+        content: f[1].clone(),
+        importance: f[2].parse().unwrap_or(0.0),
+        source: normalize_id(&f[3]),
+        stability: f[4].parse().unwrap_or(0.0),
+        subject: f[5] == "true",
+        target: normalize_id(&f[6]),
+    })
+}
+
+fn parse_toon_node(f: &[String]) -> Option<(String, Node)> {
+    if f.len() < 4 {
+        return None;
+    }
+    Some((
+        normalize_id(&f[2]),
+        Node { body: f[0].clone(), date: f[1].clone(), node_type: f[3].clone() },
+    ))
+}
+
 fn load_graph() -> Graph {
     let toon = match std::fs::read_to_string(TOON_PATH) {
         Ok(s) => s,
@@ -239,35 +268,14 @@ fn load_graph() -> Graph {
         match section {
             ToonSection::None => {}
             ToonSection::Edges => {
-                let f = parse_toon_row(trimmed);
-                if f.len() < 7 {
-                    continue;
+                if let Some(edge) = parse_toon_edge(&parse_toon_row(trimmed)) {
+                    graph.edges.push(edge);
                 }
-                // TOON edge columns alphabetically: confidence, content, importance, source, stability, subject, target
-                graph.edges.push(Edge {
-                    confidence: f[0].parse().unwrap_or(0.0),
-                    content: f[1].clone(),
-                    importance: f[2].parse().unwrap_or(0.0),
-                    source: normalize_id(&f[3]),
-                    stability: f[4].parse().unwrap_or(0.0),
-                    subject: f[5] == "true",
-                    target: normalize_id(&f[6]),
-                });
             }
             ToonSection::Nodes => {
-                let f = parse_toon_row(trimmed);
-                if f.len() < 4 {
-                    continue;
+                if let Some((id, node)) = parse_toon_node(&parse_toon_row(trimmed)) {
+                    graph.nodes.insert(id, node);
                 }
-                // TOON node columns alphabetically: body, date, id, type
-                graph.nodes.insert(
-                    normalize_id(&f[2]),
-                    Node {
-                        body: f[0].clone(),
-                        date: f[1].clone(),
-                        node_type: f[3].clone(),
-                    },
-                );
             }
         }
     }
@@ -470,40 +478,34 @@ fn remove_edges(edges: &mut Vec<Edge>, source: &str, target: &str) {
     }
 }
 
+fn insert_edge(graph: &mut Graph, edge: Edge) {
+    remove_edges(&mut graph.edges, &edge.source, &edge.target);
+    graph.edges.push(edge);
+}
+
+fn delete_node(graph: &mut Graph, name: &str) {
+    graph.nodes.remove(name);
+    let mut i = 0;
+    while i < graph.edges.len() {
+        if graph.edges[i].source == name || graph.edges[i].target == name {
+            graph.edges.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 fn execute_tool(call: ToolCall, graph: &mut Graph) -> Option<String> {
     match call {
         ToolCall::Respond(text) => Some(text),
-        ToolCall::UpsertNode {
-            name,
-            node_type,
-            body,
-            date,
-        } => {
-            graph.nodes.insert(
-                normalize_id(&name),
-                Node {
-                    node_type,
-                    body,
-                    date,
-                },
-            );
+        ToolCall::UpsertNode { name, node_type, body, date } => {
+            graph.nodes.insert(normalize_id(&name), Node { node_type, body, date });
             None
         }
-        ToolCall::UpsertEdge {
-            source,
-            target,
-            content,
-            stability,
-            confidence,
-            importance,
-            subject,
-        } => {
-            let source = normalize_id(&source);
-            let target = normalize_id(&target);
-            remove_edges(&mut graph.edges, &source, &target);
-            graph.edges.push(Edge {
-                source,
-                target,
+        ToolCall::UpsertEdge { source, target, content, stability, confidence, importance, subject } => {
+            insert_edge(graph, Edge {
+                source: normalize_id(&source),
+                target: normalize_id(&target),
                 content,
                 stability,
                 confidence,
@@ -513,24 +515,11 @@ fn execute_tool(call: ToolCall, graph: &mut Graph) -> Option<String> {
             None
         }
         ToolCall::DeleteNode { name } => {
-            let name = normalize_id(&name);
-            graph.nodes.remove(&name);
-            let mut i = 0;
-            while i < graph.edges.len() {
-                if graph.edges[i].source == name || graph.edges[i].target == name {
-                    graph.edges.remove(i);
-                } else {
-                    i += 1;
-                }
-            }
+            delete_node(graph, &normalize_id(&name));
             None
         }
         ToolCall::DeleteEdge { source, target } => {
-            remove_edges(
-                &mut graph.edges,
-                &normalize_id(&source),
-                &normalize_id(&target),
-            );
+            remove_edges(&mut graph.edges, &normalize_id(&source), &normalize_id(&target));
             None
         }
     }
@@ -710,7 +699,11 @@ fn build_system_prompt(explanation: &str, toon: &str) -> String {
 
 // ─── HTTP ─────────────────────────────────────────────────────────────────────
 
-async fn call_ollama(
+fn clear_tok_line() {
+    eprint!("\r                    \r");
+}
+
+async fn stream_ollama(
     model: &str,
     system_prompt: &str,
     user_prompt: &str,
@@ -721,28 +714,85 @@ async fn call_ollama(
             { "role": "system", "content": system_prompt },
             { "role": "user",   "content": user_prompt },
         ],
-        "stream": false,
+        "stream": true,
         "format": "json",
         "options": { "num_ctx": OLLAMA_NUM_CTX },
     });
-    let resp: OllamaResponse = reqwest::Client::new()
-        .post(URL_OLLAMA)
-        .json(&body)
-        .send()
-        .await?
-        .json()
-        .await?;
-    let prompt = resp.prompt_eval_count.unwrap_or(0);
-    let completion = resp.eval_count.unwrap_or(0);
-    Ok(LlmResponse {
-        content: resp.message.content,
-        prompt_tokens: prompt,
-        completion_tokens: completion,
-        cost: None,
-    })
+    let response = reqwest::Client::new().post(URL_OLLAMA).json(&body).send().await?;
+    let mut byte_stream = response.bytes_stream();
+    let mut buf = String::new();
+    let mut content = String::new();
+    let mut n = 0u32;
+    let mut prompt_tokens = 0u32;
+    let mut completion_tokens = 0u32;
+    while let Some(item) = byte_stream.next().await {
+        buf.push_str(&String::from_utf8_lossy(&item?));
+        while let Some(nl) = buf.find('\n') {
+            let line = buf[..nl].trim().to_string();
+            buf = buf[nl + 1..].to_string();
+            if line.is_empty() {
+                continue;
+            }
+            let Ok(chunk) = serde_json::from_str::<OllamaChunk>(&line) else { continue };
+            content.push_str(&chunk.message.content);
+            if chunk.done {
+                prompt_tokens = chunk.prompt_eval_count.unwrap_or(0);
+                completion_tokens = chunk.eval_count.unwrap_or(0);
+            } else {
+                n += 1;
+                eprint!("\r  {n} tok");
+            }
+        }
+    }
+    clear_tok_line();
+    Ok(LlmResponse { content, prompt_tokens, completion_tokens, cost: None })
 }
 
-async fn call_openrouter(
+async fn parse_openai_sse_stream(
+    response: reqwest::Response,
+    prepend: &str,
+) -> Result<LlmResponse, Box<dyn Error>> {
+    let mut byte_stream = response.bytes_stream();
+    let mut buf = String::new();
+    let mut content = String::new();
+    let mut n = 0u32;
+    let mut prompt_tokens = 0u32;
+    let mut completion_tokens = 0u32;
+    let mut cost: Option<f64> = None;
+    while let Some(item) = byte_stream.next().await {
+        buf.push_str(&String::from_utf8_lossy(&item?));
+        while let Some(nl) = buf.find('\n') {
+            let line = buf[..nl].trim().to_string();
+            buf = buf[nl + 1..].to_string();
+            let Some(data) = line.strip_prefix("data: ") else { continue };
+            if data == "[DONE]" {
+                continue;
+            }
+            let Ok(chunk) = serde_json::from_str::<OpenAiChunk>(data) else { continue };
+            if let Some(u) = chunk.usage {
+                prompt_tokens = u.prompt_tokens;
+                completion_tokens = u.completion_tokens;
+                cost = u.cost;
+            }
+            for choice in chunk.choices {
+                if let Some(text) = choice.delta.content
+                    && !text.is_empty()
+                {
+                    content.push_str(&text);
+                    n += 1;
+                    eprint!("\r  {n} tok");
+                }
+            }
+        }
+    }
+    clear_tok_line();
+    if !prepend.is_empty() {
+        content = format!("{prepend}{content}");
+    }
+    Ok(LlmResponse { content, prompt_tokens, completion_tokens, cost })
+}
+
+async fn stream_openrouter(
     api_key: &str,
     model: &str,
     system_prompt: &str,
@@ -755,31 +805,19 @@ async fn call_openrouter(
             { "role": "user",      "content": user_prompt },
             { "role": "assistant", "content": "{" },
         ],
+        "stream": true,
+        "stream_options": { "include_usage": true },
     });
-    let resp: OpenAiResponse = reqwest::Client::new()
+    let response = reqwest::Client::new()
         .post(URL_OPENROUTER)
         .header("Authorization", format!("Bearer {api_key}"))
         .json(&body)
         .send()
-        .await?
-        .json()
         .await?;
-    let Some(choice) = resp.choices.into_iter().next() else {
-        return Err("no choices in response".into());
-    };
-    let (prompt_tokens, completion_tokens, cost) = match resp.usage {
-        Some(u) => (u.prompt_tokens, u.completion_tokens, u.cost),
-        None => (0, 0, None),
-    };
-    Ok(LlmResponse {
-        content: choice.message.content,
-        prompt_tokens,
-        completion_tokens,
-        cost,
-    })
+    parse_openai_sse_stream(response, "{").await
 }
 
-async fn call_llamacpp(
+async fn stream_llamacpp(
     url: &str,
     api_key: &str,
     model: &str,
@@ -793,32 +831,16 @@ async fn call_llamacpp(
             { "role": "system", "content": system_prompt },
             { "role": "user",   "content": user_prompt },
         ],
+        "stream": true,
+        "stream_options": { "include_usage": true },
     });
-    let raw = reqwest::Client::new()
+    let response = reqwest::Client::new()
         .post(&endpoint)
         .header("Authorization", format!("Bearer {api_key}"))
         .json(&body)
         .send()
-        .await?
-        .text()
         .await?;
-    let resp: OpenAiResponse = match serde_json::from_str(&raw) {
-        Ok(r) => r,
-        Err(e) => return Err(format!("llamacpp parse error: {e}\nraw: {raw}").into()),
-    };
-    let Some(choice) = resp.choices.into_iter().next() else {
-        return Err(format!("no choices in llamacpp response\nraw: {raw}").into());
-    };
-    let (prompt_tokens, completion_tokens, cost) = match resp.usage {
-        Some(u) => (u.prompt_tokens, u.completion_tokens, u.cost),
-        None => (0, 0, None),
-    };
-    Ok(LlmResponse {
-        content: choice.message.content,
-        prompt_tokens,
-        completion_tokens,
-        cost,
-    })
+    parse_openai_sse_stream(response, "").await
 }
 
 async fn call_llm(
@@ -827,15 +849,13 @@ async fn call_llm(
     user_prompt: &str,
 ) -> Result<LlmResponse, Box<dyn Error>> {
     match backend {
-        Backend::Ollama { model } => call_ollama(model, system_prompt, user_prompt).await,
+        Backend::Ollama { model } => stream_ollama(model, system_prompt, user_prompt).await,
         Backend::OpenRouter { api_key, model } => {
-            call_openrouter(api_key, model, system_prompt, user_prompt).await
+            stream_openrouter(api_key, model, system_prompt, user_prompt).await
         }
-        Backend::LlamaCpp {
-            url,
-            api_key,
-            model,
-        } => call_llamacpp(url, api_key, model, system_prompt, user_prompt).await,
+        Backend::LlamaCpp { url, api_key, model } => {
+            stream_llamacpp(url, api_key, model, system_prompt, user_prompt).await
+        }
     }
 }
 
