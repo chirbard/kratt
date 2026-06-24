@@ -248,6 +248,30 @@ fn parse_toon_node(fields: &[String]) -> Option<(String, Node)> {
     ))
 }
 
+fn apply_toon_line(trimmed: &str, graph: &mut Graph, section: &mut ToonSection) {
+    if trimmed.starts_with("edges[") {
+        *section = ToonSection::Edges;
+        return;
+    }
+    if trimmed.starts_with("nodes[") {
+        *section = ToonSection::Nodes;
+        return;
+    }
+    match section {
+        ToonSection::None => {}
+        ToonSection::Edges => {
+            if let Some(edge) = parse_toon_edge(&parse_toon_row(trimmed)) {
+                graph.edges.push(edge);
+            }
+        }
+        ToonSection::Nodes => {
+            if let Some((node_id, node)) = parse_toon_node(&parse_toon_row(trimmed)) {
+                graph.nodes.insert(node_id, node);
+            }
+        }
+    }
+}
+
 fn load_graph() -> Graph {
     let toon = match std::fs::read_to_string(TOON_PATH) {
         Ok(toon_text) => toon_text,
@@ -257,29 +281,8 @@ fn load_graph() -> Graph {
     let mut section = ToonSection::None;
     for line in toon.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with("edges[") {
-            section = ToonSection::Edges;
-            continue;
-        }
-        if trimmed.starts_with("nodes[") {
-            section = ToonSection::Nodes;
-            continue;
-        }
-        match section {
-            ToonSection::None => {}
-            ToonSection::Edges => {
-                if let Some(edge) = parse_toon_edge(&parse_toon_row(trimmed)) {
-                    graph.edges.push(edge);
-                }
-            }
-            ToonSection::Nodes => {
-                if let Some((node_id, node)) = parse_toon_node(&parse_toon_row(trimmed)) {
-                    graph.nodes.insert(node_id, node);
-                }
-            }
+        if !trimmed.is_empty() {
+            apply_toon_line(trimmed, &mut graph, &mut section);
         }
     }
     graph
@@ -756,6 +759,10 @@ async fn stream_ollama(
         "options": { "num_ctx": OLLAMA_NUM_CTX },
     });
     let response = reqwest::Client::new().post(URL_OLLAMA).json(&body).send().await?;
+    parse_ollama_stream(response).await
+}
+
+async fn parse_ollama_stream(response: reqwest::Response) -> Result<LlmResponse, Box<dyn Error>> {
     let t_start = std::time::Instant::now();
     let mut byte_stream = response.bytes_stream();
     let mut line_buffer = String::new();
@@ -998,6 +1005,24 @@ fn collect_tool_calls(llm_output: &str) -> Vec<ToolCall> {
     calls
 }
 
+async fn collect_with_retry(backend: &Backend, normalized_response: &str) -> Vec<ToolCall> {
+    let mut calls = collect_tool_calls(normalized_response);
+    if calls.is_empty() {
+        eprintln!("  json parse failed, retrying with fixer");
+        match fix_json(backend, normalized_response).await {
+            Ok(fixed) => {
+                calls = collect_tool_calls(&fixed);
+                if calls.is_empty() {
+                    eprintln!("  fixer also failed — skipping");
+                    println!("  {fixed}");
+                }
+            }
+            Err(err) => eprintln!("  fixer error: {err}"),
+        }
+    }
+    calls
+}
+
 async fn run_agent(
     agent_def: &AgentDef,
     backend: &Backend,
@@ -1009,20 +1034,7 @@ async fn run_agent(
     let system = build_system_prompt(agent_def.explanation, &toon);
     let response = call_llm(backend, &system, user_message).await?;
     let normalized_response = normalize_response(&response.content);
-    let mut calls = collect_tool_calls(&normalized_response);
-    if calls.is_empty() {
-        eprintln!("  json parse failed, retrying with fixer");
-        match fix_json(backend, &normalized_response).await {
-            Ok(fixed) => {
-                calls = collect_tool_calls(&fixed);
-                if calls.is_empty() {
-                    eprintln!("  fixer also failed — skipping");
-                    println!("  {fixed}");
-                }
-            }
-            Err(err) => eprintln!("  fixer error: {err}"),
-        }
-    }
+    let calls = collect_with_retry(backend, &normalized_response).await;
     if !calls.is_empty() {
         for call in calls {
             if let Some(text) = execute_tool(call, graph)
@@ -1039,6 +1051,14 @@ async fn run_agent(
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
+
+const AGENT_PIPELINE: [AgentDef; 5] = [
+    AgentDef { label: "main",        explanation: EXPLANATION,             show_reply: false },
+    AgentDef { label: "extract",     explanation: EXTRACT_EXPLANATION,     show_reply: false },
+    AgentDef { label: "reify",       explanation: REIFY_EXPLANATION,       show_reply: false },
+    AgentDef { label: "rationalize", explanation: RATIONALIZE_EXPLANATION, show_reply: false },
+    AgentDef { label: "consolidate", explanation: CONSOLIDATE_EXPLANATION, show_reply: true  },
+];
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -1059,34 +1079,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let agents = [
-        AgentDef {
-            label: "main",
-            explanation: EXPLANATION,
-            show_reply: false,
-        },
-        AgentDef {
-            label: "extract",
-            explanation: EXTRACT_EXPLANATION,
-            show_reply: false,
-        },
-        AgentDef {
-            label: "reify",
-            explanation: REIFY_EXPLANATION,
-            show_reply: false,
-        },
-        AgentDef {
-            label: "rationalize",
-            explanation: RATIONALIZE_EXPLANATION,
-            show_reply: false,
-        },
-        AgentDef {
-            label: "consolidate",
-            explanation: CONSOLIDATE_EXPLANATION,
-            show_reply: true,
-        },
-    ];
-    for agent_def in &agents {
+    for agent_def in &AGENT_PIPELINE {
         run_agent(agent_def, &backend, &user_prompt, &mut graph).await?;
     }
 

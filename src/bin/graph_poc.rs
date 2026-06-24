@@ -65,6 +65,7 @@ fn parse_frontmatter(text: &str) -> Option<Frontmatter> {
     serde_yaml::from_str(&after_open[..close]).ok()
 }
 
+#[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
 fn populate_sled(vault: &str, nodes: &sled::Tree, edges: &sled::Tree) -> Result<(), Box<dyn Error>> {
     nodes.clear()?;
     edges.clear()?;
@@ -183,6 +184,7 @@ fn load_edge_records(edges: &sled::Tree) -> Result<Vec<EdgeRecord>, Box<dyn Erro
     Ok(records)
 }
 
+#[allow(clippy::too_many_lines)]
 fn write_gexf(nodes: &sled::Tree, edges: &sled::Tree) -> Result<String, Box<dyn Error>> {
     let records = load_edge_records(edges)?;
 
@@ -232,6 +234,7 @@ fn write_gexf(nodes: &sled::Tree, edges: &sled::Tree) -> Result<String, Box<dyn 
     Ok(out)
 }
 
+#[allow(clippy::too_many_lines)]
 fn write_toon(nodes: &sled::Tree, edges: &sled::Tree) -> Result<String, Box<dyn Error>> {
     let records = load_edge_records(edges)?;
 

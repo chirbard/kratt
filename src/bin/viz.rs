@@ -77,6 +77,7 @@ fn parse_toon_row(line: &str) -> Vec<String> {
     fields
 }
 
+#[allow(clippy::too_many_lines)]
 fn load_toon(path: &str) -> Result<(NodeMap, Vec<Edge>), Box<dyn Error>> {
     let raw = std::fs::read_to_string(path)?;
     let mut nodes: NodeMap = HashMap::new();
@@ -141,6 +142,7 @@ fn xml_escape(s: &str) -> String {
     out
 }
 
+#[allow(clippy::too_many_lines)]
 fn write_gexf(nodes: &NodeMap, edges: &[Edge]) -> Result<String, Box<dyn Error>> {
     let mut all_nodes: Vec<String> = nodes.keys().cloned().collect();
     for e in edges {
