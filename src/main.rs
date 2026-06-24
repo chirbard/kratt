@@ -837,6 +837,21 @@ async fn parse_openai_sse_stream(
     Ok(LlmResponse { content, prompt_tokens, completion_tokens, cost, ttft, gen_secs })
 }
 
+async fn post_openai_compat(
+    url: &str,
+    api_key: &str,
+    body: serde_json::Value,
+    prepend: &str,
+) -> Result<LlmResponse, Box<dyn Error>> {
+    let response = reqwest::Client::new()
+        .post(url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await?;
+    parse_openai_sse_stream(response, prepend).await
+}
+
 async fn stream_openrouter(
     api_key: &str,
     model: &str,
@@ -853,13 +868,7 @@ async fn stream_openrouter(
         "stream": true,
         "stream_options": { "include_usage": true },
     });
-    let response = reqwest::Client::new()
-        .post(URL_OPENROUTER)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&body)
-        .send()
-        .await?;
-    parse_openai_sse_stream(response, "{").await
+    post_openai_compat(URL_OPENROUTER, api_key, body, "{").await
 }
 
 async fn stream_llamacpp(
@@ -879,13 +888,7 @@ async fn stream_llamacpp(
         "stream": true,
         "stream_options": { "include_usage": true },
     });
-    let response = reqwest::Client::new()
-        .post(&endpoint)
-        .header("Authorization", format!("Bearer {api_key}"))
-        .json(&body)
-        .send()
-        .await?;
-    parse_openai_sse_stream(response, "").await
+    post_openai_compat(&endpoint, api_key, body, "").await
 }
 
 async fn call_llm(
@@ -942,25 +945,15 @@ fn print_usage(response: &LlmResponse) {
     } else {
         0.0
     };
-    match response.cost {
-        Some(cost) => println!(
-            "  tokens: {}+{}={}  ttft: {:.2}s  {:.1}tok/s  cost: ${:.6}",
-            response.prompt_tokens,
-            response.completion_tokens,
-            response.prompt_tokens + response.completion_tokens,
-            response.ttft,
-            tokens_per_sec,
-            cost
-        ),
-        None => println!(
-            "  tokens: {}+{}={}  ttft: {:.2}s  {:.1}tok/s",
-            response.prompt_tokens,
-            response.completion_tokens,
-            response.prompt_tokens + response.completion_tokens,
-            response.ttft,
-            tokens_per_sec
-        ),
+    let total = response.prompt_tokens + response.completion_tokens;
+    print!(
+        "  tokens: {}+{}={}  ttft: {:.2}s  {:.1}tok/s",
+        response.prompt_tokens, response.completion_tokens, total, response.ttft, tokens_per_sec,
+    );
+    if let Some(cost) = response.cost {
+        print!("  cost: ${cost:.6}");
     }
+    println!();
 }
 
 // ─── Agent pipeline ───────────────────────────────────────────────────────────
