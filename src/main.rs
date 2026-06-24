@@ -142,6 +142,8 @@ struct LlmResponse {
     prompt_tokens: u32,
     completion_tokens: u32,
     cost: Option<f64>,
+    ttft: f64,
+    gen_secs: f64,
 }
 
 // ─── Graph ────────────────────────────────────────────────────────────────────
@@ -703,6 +705,40 @@ fn clear_tok_line() {
     eprint!("\r                    \r");
 }
 
+fn timing_secs(
+    t_start: std::time::Instant,
+    t_first: Option<std::time::Instant>,
+    t_end: std::time::Instant,
+) -> (f64, f64) {
+    match t_first {
+        Some(t) => (
+            t.duration_since(t_start).as_secs_f64(),
+            t_end.duration_since(t).as_secs_f64(),
+        ),
+        None => (0.0, 0.0),
+    }
+}
+
+fn apply_openai_chunk(
+    chunk: OpenAiChunk,
+    content: &mut String,
+    n: &mut u32,
+    t_first: &mut Option<std::time::Instant>,
+) {
+    for choice in chunk.choices {
+        if let Some(text) = choice.delta.content
+            && !text.is_empty()
+        {
+            if t_first.is_none() {
+                *t_first = Some(std::time::Instant::now());
+            }
+            content.push_str(&text);
+            *n += 1;
+            eprint!("\r  {n} tok");
+        }
+    }
+}
+
 async fn stream_ollama(
     model: &str,
     system_prompt: &str,
@@ -719,12 +755,14 @@ async fn stream_ollama(
         "options": { "num_ctx": OLLAMA_NUM_CTX },
     });
     let response = reqwest::Client::new().post(URL_OLLAMA).json(&body).send().await?;
+    let t_start = std::time::Instant::now();
     let mut byte_stream = response.bytes_stream();
     let mut buf = String::new();
     let mut content = String::new();
     let mut n = 0u32;
     let mut prompt_tokens = 0u32;
     let mut completion_tokens = 0u32;
+    let mut t_first: Option<std::time::Instant> = None;
     while let Some(item) = byte_stream.next().await {
         buf.push_str(&String::from_utf8_lossy(&item?));
         while let Some(nl) = buf.find('\n') {
@@ -739,19 +777,24 @@ async fn stream_ollama(
                 prompt_tokens = chunk.prompt_eval_count.unwrap_or(0);
                 completion_tokens = chunk.eval_count.unwrap_or(0);
             } else {
+                if t_first.is_none() {
+                    t_first = Some(std::time::Instant::now());
+                }
                 n += 1;
                 eprint!("\r  {n} tok");
             }
         }
     }
     clear_tok_line();
-    Ok(LlmResponse { content, prompt_tokens, completion_tokens, cost: None })
+    let (ttft, gen_secs) = timing_secs(t_start, t_first, std::time::Instant::now());
+    Ok(LlmResponse { content, prompt_tokens, completion_tokens, cost: None, ttft, gen_secs })
 }
 
 async fn parse_openai_sse_stream(
     response: reqwest::Response,
     prepend: &str,
 ) -> Result<LlmResponse, Box<dyn Error>> {
+    let t_start = std::time::Instant::now();
     let mut byte_stream = response.bytes_stream();
     let mut buf = String::new();
     let mut content = String::new();
@@ -759,6 +802,7 @@ async fn parse_openai_sse_stream(
     let mut prompt_tokens = 0u32;
     let mut completion_tokens = 0u32;
     let mut cost: Option<f64> = None;
+    let mut t_first: Option<std::time::Instant> = None;
     while let Some(item) = byte_stream.next().await {
         buf.push_str(&String::from_utf8_lossy(&item?));
         while let Some(nl) = buf.find('\n') {
@@ -769,27 +813,20 @@ async fn parse_openai_sse_stream(
                 continue;
             }
             let Ok(chunk) = serde_json::from_str::<OpenAiChunk>(data) else { continue };
-            if let Some(u) = chunk.usage {
+            if let Some(ref u) = chunk.usage {
                 prompt_tokens = u.prompt_tokens;
                 completion_tokens = u.completion_tokens;
                 cost = u.cost;
             }
-            for choice in chunk.choices {
-                if let Some(text) = choice.delta.content
-                    && !text.is_empty()
-                {
-                    content.push_str(&text);
-                    n += 1;
-                    eprint!("\r  {n} tok");
-                }
-            }
+            apply_openai_chunk(chunk, &mut content, &mut n, &mut t_first);
         }
     }
     clear_tok_line();
+    let (ttft, gen_secs) = timing_secs(t_start, t_first, std::time::Instant::now());
     if !prepend.is_empty() {
         content = format!("{prepend}{content}");
     }
-    Ok(LlmResponse { content, prompt_tokens, completion_tokens, cost })
+    Ok(LlmResponse { content, prompt_tokens, completion_tokens, cost, ttft, gen_secs })
 }
 
 async fn stream_openrouter(
@@ -891,26 +928,28 @@ async fn fix_json(backend: &Backend, broken: &str) -> Result<String, Box<dyn Err
     Ok(normalize_response(&response.content))
 }
 
-fn print_usage(r: &LlmResponse, elapsed: f64) {
-    let tps = if elapsed > 0.0 {
-        r.completion_tokens as f64 / elapsed
+fn print_usage(r: &LlmResponse) {
+    let tps = if r.gen_secs > 0.0 {
+        r.completion_tokens as f64 / r.gen_secs
     } else {
         0.0
     };
     match r.cost {
         Some(cost) => println!(
-            "  tokens: {}+{}={} {:.1}tok/s cost: ${:.6}",
+            "  tokens: {}+{}={}  ttft: {:.2}s  {:.1}tok/s  cost: ${:.6}",
             r.prompt_tokens,
             r.completion_tokens,
             r.prompt_tokens + r.completion_tokens,
+            r.ttft,
             tps,
             cost
         ),
         None => println!(
-            "  tokens: {}+{}={} {:.1}tok/s",
+            "  tokens: {}+{}={}  ttft: {:.2}s  {:.1}tok/s",
             r.prompt_tokens,
             r.completion_tokens,
             r.prompt_tokens + r.completion_tokens,
+            r.ttft,
             tps
         ),
     }
@@ -967,9 +1006,7 @@ async fn run_agent(
     println!("\n[{}]", def.label);
     let toon = toon::encode(&graph_to_json(graph), None);
     let system = build_system_prompt(def.explanation, &toon);
-    let t0 = std::time::Instant::now();
     let response = call_llm(backend, &system, user_message).await?;
-    let elapsed = t0.elapsed().as_secs_f64();
     let raw = normalize_response(&response.content);
     let mut calls = collect_tool_calls(&raw);
     if calls.is_empty() {
@@ -996,7 +1033,7 @@ async fn run_agent(
         save_graph(graph)?;
         git_commit(def.label)?;
     }
-    print_usage(&response, elapsed);
+    print_usage(&response);
     Ok(())
 }
 
