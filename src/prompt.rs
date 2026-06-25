@@ -59,7 +59,7 @@ First, update the graph:
 - Normalise inconsistent edge content templates — reword edges that use novel phrasing when an equivalent existing template already exists in the graph
 - Add relationships clearly implied by two or more existing edges
 
-Then include a respond call with your reply to the user's original message, drawing on the complete memory graph. This is the reply the user will see — write it as yourself, not as a summary of what you did."#;
+Then include a respond call with your reply to the user's most recent message, drawing on the complete memory graph and any conversation context provided. This is the reply the user will see — write it as yourself, not as a summary of what you did."#;
 
 const JSON_OUTPUT_RULES: &str = r#"Respond with raw JSON only. No markdown. No prose. No code fences. Start immediately with `{`.
 

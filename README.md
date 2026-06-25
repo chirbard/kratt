@@ -15,20 +15,23 @@
 | `KRATT_DEBUG`        | off                          | set to any value to log raw SSE stream |
 
 ```sh
-# pass prompt as argument
+# one-shot: pass prompt as argument
 cargo run --bin kratt "your message here"
 
-# or start and type when prompted
+# one-shot: type when prompted
 cargo run --bin kratt
 
+# chat mode: persistent conversation loop
+cargo run --bin chat
+
 # run with openrouter
-KRATT_BACKEND=openrouter cargo run --bin kratt "your message here"
+KRATT_BACKEND=openrouter cargo run --bin chat
 
 # run with a different ollama model
-OLLAMA_MODEL=qwen2.5:14b cargo run --bin kratt "your message here"
+OLLAMA_MODEL=qwen2.5:14b cargo run --bin chat
 
 # run with llama.cpp
-KRATT_BACKEND=llamacpp LLAMACPP_URL=http://localhost:8080 LLAMACPP_API_KEY=none cargo run --bin kratt "your message here"
+KRATT_BACKEND=llamacpp LLAMACPP_URL=http://localhost:8080 LLAMACPP_API_KEY=none cargo run --bin chat
 ```
 
 ## debug

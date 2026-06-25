@@ -8,7 +8,7 @@ use crate::prompt::build_system_prompt;
 pub struct AgentDef {
     pub label: &'static str,
     pub explanation: &'static str,
-    pub show_reply: bool,
+    pub use_chat_context: bool,
 }
 
 enum ToolCall {
@@ -183,25 +183,30 @@ pub async fn run_agent(
     agent_def: &AgentDef,
     backend: &Backend,
     user_message: &str,
+    chat_context: &str,
     graph: &mut Graph,
-) -> Result<(), Box<dyn Error>> {
-    println!("\n[{}]", agent_def.label);
+) -> Result<Option<String>, Box<dyn Error>> {
+    eprintln!("\n[{}]", agent_def.label);
     let toon = toon::encode(&graph_to_json(graph), None);
     let system = build_system_prompt(agent_def.explanation, &toon);
-    let response = call_llm(backend, &system, user_message).await?;
+    let effective_message = if agent_def.use_chat_context && !chat_context.is_empty() {
+        format!("{chat_context}\nUser: {user_message}")
+    } else {
+        user_message.to_string()
+    };
+    let response = call_llm(backend, &system, &effective_message).await?;
     let normalized_response = normalize_response(&response.content);
     let calls = collect_with_retry(backend, &normalized_response).await;
+    let mut reply: Option<String> = None;
     if !calls.is_empty() {
         for call in calls {
-            if let Some(text) = execute_tool(call, graph)
-                && agent_def.show_reply
-            {
-                println!("\n{text}");
+            if let Some(text) = execute_tool(call, graph) {
+                reply = Some(text);
             }
         }
         save_graph(graph)?;
         git_commit(agent_def.label)?;
     }
     print_usage(&response);
-    Ok(())
+    Ok(reply)
 }

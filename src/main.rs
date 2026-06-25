@@ -10,35 +10,29 @@
     clippy::min_ident_chars,
 )]
 
-mod agent;
-mod git;
-mod graph;
-mod llm;
-mod prompt;
-
 use std::error::Error;
-use agent::{AgentDef, run_agent};
-use git::git_init_if_needed;
-use graph::load_graph;
-use llm::Backend;
-use prompt::{
+use kratt::agent::{AgentDef, run_agent};
+use kratt::git::git_init_if_needed;
+use kratt::graph::load_graph;
+use kratt::llm::Backend;
+use kratt::prompt::{
     CONSOLIDATE_EXPLANATION, EXPLANATION, EXTRACT_EXPLANATION, RATIONALIZE_EXPLANATION,
     REIFY_EXPLANATION,
 };
 
 const AGENT_PIPELINE: [AgentDef; 5] = [
-    AgentDef { label: "main",        explanation: EXPLANATION,             show_reply: false },
-    AgentDef { label: "extract",     explanation: EXTRACT_EXPLANATION,     show_reply: false },
-    AgentDef { label: "reify",       explanation: REIFY_EXPLANATION,       show_reply: false },
-    AgentDef { label: "rationalize", explanation: RATIONALIZE_EXPLANATION, show_reply: false },
-    AgentDef { label: "consolidate", explanation: CONSOLIDATE_EXPLANATION, show_reply: true  },
+    AgentDef { label: "main",        explanation: EXPLANATION,             use_chat_context: false },
+    AgentDef { label: "extract",     explanation: EXTRACT_EXPLANATION,     use_chat_context: false },
+    AgentDef { label: "reify",       explanation: REIFY_EXPLANATION,       use_chat_context: false },
+    AgentDef { label: "rationalize", explanation: RATIONALIZE_EXPLANATION, use_chat_context: false },
+    AgentDef { label: "consolidate", explanation: CONSOLIDATE_EXPLANATION, use_chat_context: false },
 ];
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenvy::dotenv()?;
     let backend = Backend::from_env()?;
-    println!("backend: {}", backend.label());
+    eprintln!("backend: {}", backend.label());
 
     git_init_if_needed()?;
     let mut graph = load_graph();
@@ -46,7 +40,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let user_prompt = match std::env::args().nth(1) {
         Some(cli_arg) => cli_arg,
         None => {
-            println!("waiting for input...");
+            eprintln!("waiting for input...");
             let mut line = String::new();
             std::io::stdin().read_line(&mut line)?;
             line.trim().to_string()
@@ -54,7 +48,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     for agent_def in &AGENT_PIPELINE {
-        run_agent(agent_def, &backend, &user_prompt, &mut graph).await?;
+        if let Some(text) = run_agent(agent_def, &backend, &user_prompt, "", &mut graph).await? {
+            println!("\n{text}");
+        }
     }
 
     Ok(())
