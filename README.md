@@ -1,6 +1,31 @@
-# kratt
+# kratt (v1) — archived
 
-## env vars
+The first version of **kratt**, a personal research project on giving an AI
+assistant a memory of its own. Built May–June 2026; kept here as a record. It
+is not maintained.
+
+**What it tried:** an LLM agent that writes its own memory as a graph while it
+talks. Each message is answered, then mined for entities and facts, stored as
+nodes and typed links — every link carrying *stability*, *confidence* and
+*importance* scores, and a natural-language template for what it means. Later
+passes extract aggressively, then prune what was not actually said. The graph
+lives in its own git repo, one commit per memory step, and can be exported to
+Graphviz, Gephi and TOON for inspection. It runs against Ollama, OpenRouter or
+llama.cpp.
+
+**Where it went:** the work continued in later, private versions. They moved
+away from memory an LLM builds for itself — which drifts and fills with
+confident junk — toward retrieval over notes a person writes, and toward
+judging candidate notes with small decision models instead of generating new
+memory.
+
+`notes/vault-CLAUDE.md` is the full instruction set the memory agent followed.
+
+---
+
+## Usage (as it was)
+
+### env vars
 
 | var                  | default                      | description                          |
 | -------------------- | ---------------------------- | ------------------------------------ |
