@@ -1,25 +1,34 @@
 # kratt (v1) — archived
 
-The first version of **kratt**, a personal research project on giving an AI
-assistant a memory of its own. Built May–June 2026; kept here as a record. It
-is not maintained.
+The first version of **kratt**, a personal research project. Built May 25 –
+June 25, 2026; kept here as a record. It is not maintained.
 
-**What it tried:** an LLM agent that writes its own memory as a graph while it
-talks. Each message is answered, then mined for entities and facts, stored as
-nodes and typed links — every link carrying *stability*, *confidence* and
-*importance* scores, and a natural-language template for what it means. Later
-passes extract aggressively, then prune what was not actually said. The graph
-lives in its own git repo, one commit per memory step, and can be exported to
-Graphviz, Gephi and TOON for inspection. It runs against Ollama, OpenRouter or
-llama.cpp.
+**The goal**, shared by every version: an AI that learns the way a person
+does — imperfect, but sample-efficient — and keeps what it learns as a memory
+of its own: plain-language beliefs joined by links that carry their meaning,
+readable by a person and loadable by any model.
 
-**Where it went:** the work continued in later, private versions. They moved
-away from memory an LLM builds for itself — which drifts and fills with
-confident junk — toward retrieval over notes a person writes, and toward
-judging candidate notes with small decision models instead of generating new
-memory.
+**What v1 tested** was the foundation everything else would stand on:
+*extraction*. Can a language model turn a conversation into clean, linked
+memory — entities, facts, and edges that each carry *stability*,
+*confidence* and *importance* — without inventing what was never said? It
+went at that twice:
 
-`notes/vault-CLAUDE.md` is the full instruction set the memory agent followed.
+- **As instructions** (June 1–10): Claude Code working inside an Obsidian
+  vault, writing its memory as linked Markdown notes, with sub-agents that
+  first extract aggressively, then prune anything not actually said, then
+  consolidate. `notes/vault-CLAUDE.md` is that instruction set.
+- **As a program** (June 15–25): the same idea in Rust — its own graph,
+  tool calls instead of file edits, the multi-pass pipeline in code, every
+  memory step committed to git, small local models via Ollama and llama.cpp
+  next to OpenRouter, and exports to Graphviz, Gephi and TOON for inspection.
+
+**Where it went:** [kratt-v2](https://github.com/chirbard/kratt-v2) built
+the whole learner on this foundation — dreaming, curiosity, a daily chat —
+and found the foundation was the weak part: extracted memory drifts and fills
+with confident junk, and everything built on it amplifies that. The research
+ended in retrieval over notes a person writes, rather than memory a model
+writes for itself.
 
 ## What it built
 
