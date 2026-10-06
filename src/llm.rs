@@ -355,6 +355,12 @@ fn strip_fences(text: &str) -> &str {
 
 pub fn normalize_response(content: &str) -> String {
     let content = strip_fences(content);
+    // The request pre-fills the answer with "{". Some providers return that
+    // brace plus a complete object of the model's own, giving "{{...".
+    let content = match content.strip_prefix("{{") {
+        Some(rest) => format!("{{{rest}"),
+        None => content.to_string(),
+    };
     if content.starts_with('{') {
         content.to_string()
     } else {
