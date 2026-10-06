@@ -21,6 +21,36 @@ memory.
 
 `notes/vault-CLAUDE.md` is the full instruction set the memory agent followed.
 
+## What it built
+
+Seven made-up messages — a person introducing himself, a friend who coaches
+cheerleading, a dog, a career change, a friend's cat — and the memory kratt
+wrote for itself:
+
+![kratt's memory graph after seven messages](docs/memory-graph.svg)
+
+Blue boxes are entities, yellow notes are facts, dotted lines tie a fact to
+what it is about, and a number on a link is a confidence below certain. Note
+the two hubs, `markus` and `user`: from the third message on, the agent filed
+the same person under a second name, and no later pass merged them — the
+kind of quiet drift that pushed later versions away from LLM-built memory.
+
+Every message runs through five passes, and each pass commits the graph:
+
+```mermaid
+flowchart LR
+    M[message] --> A[store] --> B[extract<br/>aggressively] --> C[reify events<br/>into facts] --> D[prune what<br/>wasn't said] --> E[merge duplicates<br/>and reply]
+    A & B & C & D & E -.-> G[(graph in git)]
+```
+
+Replaying those commits, message by message:
+
+![the memory graph growing and being pruned, one frame per commit](docs/memory-growth.svg)
+
+Re-run in October 2026 with `openai/gpt-6-luna` through OpenRouter, from
+`docs/demo/messages.txt`; 12 of the 35 passes returned unparseable tool calls
+and were skipped. Drawn with `python3 docs/render.py kratt-data docs` as two SVGs, 25 KB gzipped together: the animation draws each node and link once and switches it on per frame.
+
 ---
 
 ## Usage (as it was)

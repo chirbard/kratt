@@ -1,0 +1,187 @@
+edges[113]{confidence,content,importance,source,stability,subject,target}:
+  1,<subject> speaks <target>,0.7,markus,0.7,false,estonian
+  1,<subject> speaks <target>,0.7,markus,0.7,false,english
+  1,<subject> speaks <target>,0.7,markus,0.7,false,german
+  1,<subject> works as <target>,0.8,markus,0.7,false,software-developer
+  1,<subject> works at <target>,0.8,markus,0.7,false,acme-corp
+  1,<subject> has <fact>,0.7,markus,0.7,false,markus-likes-rust
+  1,"",1,markus-likes-rust,1,true,markus
+  1,<fact> concerns <target>,0.7,markus-likes-rust,1,false,rust
+  1,<subject> has <fact>,0.7,markus,0.7,false,markus-likes-golang
+  1,"",1,markus-likes-golang,1,true,markus
+  1,<fact> concerns <target>,0.7,markus-likes-golang,1,false,golang
+  1,<subject> has <fact>,0.7,markus,0.7,false,markus-likes-typescript
+  1,"",1,markus-likes-typescript,1,true,markus
+  1,<fact> concerns <target>,0.7,markus-likes-typescript,1,false,typescript
+  1,<subject> has <fact>,0.7,markus,0.7,false,markus-is-into-machine-learning
+  1,"",1,markus-is-into-machine-learning,1,true,markus
+  1,<fact> concerns <target>,0.7,markus-is-into-machine-learning,1,false,machine-learning
+  1,<subject> has <fact>,0.7,markus,0.7,false,markus-is-into-llms
+  1,"",1,markus-is-into-llms,1,true,markus
+  1,<fact> concerns <target>,0.7,markus-is-into-llms,1,false,llms
+  1,<subject> is a <target>,0.7,markus,1,false,person
+  1,<subject> is a <target>,0.7,person,1,false,human
+  1,<subject> is a <target>,0.7,acme-corp,1,false,company
+  1,<subject> is a <target>,0.7,company,1,false,organization
+  1,<subject> is a <target>,0.7,software-developer,1,false,occupation
+  1,<subject> is a <target>,0.7,occupation,1,false,profession
+  1,<subject> is a <target>,0.7,estonian,1,false,natural-language
+  1,<subject> is a <target>,0.7,english,1,false,natural-language
+  1,<subject> is a <target>,0.7,german,1,false,natural-language
+  1,<subject> is a <target>,0.7,natural-language,1,false,language
+  1,<subject> is a <target>,0.7,programming-language,1,false,language
+  1,<subject> is a <target>,0.7,rust,1,false,programming-language
+  1,<subject> is a <target>,0.7,golang,1,false,programming-language
+  1,<subject> is a <target>,0.7,typescript,1,false,programming-language
+  0.7,<subject> is a <target>,0.7,machine-learning,1,false,artificial-intelligence
+  0.7,<subject> is a <target>,0.7,llms,1,false,machine-learning
+  1,<subject> speaks <target>,0.7,mari,0.7,false,estonian
+  1,<subject> speaks <target>,0.7,mari,0.7,false,english
+  1,<subject> speaks <target>,0.7,mari,0.7,false,russian
+  1,<subject> works as <target>,0.7,mari,0.7,false,cheerleading-coach
+  1,<subject> works at <target>,0.7,mari,0.7,false,hüpe
+  1,<subject> is a <target>,0.7,hüpe,1,false,gymnastics-club
+  0.7,<subject> is a <target>,0,mari,1,false,person
+  0.7,<subject> is a <target>,0,cheerleading-coach,1,false,coach
+  0.7,<subject> is a <target>,0,coach,1,false,occupation
+  0.7,<subject> is a <target>,0,gymnastics-club,1,false,organization
+  1,<subject> has <fact>,0.7,user,0.7,false,user-favourite-book-animal-farm
+  1,"",1,user-favourite-book-animal-farm,1,true,user
+  1,<fact> concerns <target>,1,user-favourite-book-animal-farm,1,false,animal-farm
+  1,<subject> has <fact>,0.7,user,0.3,false,user-reads-animal-farm-to-assistant
+  1,"",1,user-reads-animal-farm-to-assistant,0.3,true,user
+  1,<fact> concerns <target>,1,user-reads-animal-farm-to-assistant,0.3,false,animal-farm
+  1,<subject> is a <target>,0.7,animal-farm,1,false,book
+  1,<subject> is a <target>,0.7,russian,1,false,natural-language
+  1,<subject> is a <target>,0.7,border-collie,1,false,dog
+  1,<subject> is a <target>,0.7,dog,1,false,animal
+  1,"",1,malfred-is-cute,1,true,malfred
+  1,<subject> has <target>,0.7,user,0.7,false,malfred
+  1,<subject> is a <target>,0.7,malfred,1,false,border-collie
+  1,<subject> has <fact>,0.7,malfred,0.7,false,malfred-is-cute
+  1,<subject> has <fact>,0.7,user,0.3,false,walk-with-malfred-2026-10-05
+  1,"",1,walk-with-malfred-2026-10-05,0.3,true,user
+  1,<subject> participated in <fact>,0.7,malfred,0.3,false,walk-with-malfred-2026-10-05
+  1,<subject> has <fact>,0.7,user,0.3,false,user-saw-and-talked-with-mari-2026-10-05
+  1,"",1,user-saw-and-talked-with-mari-2026-10-05,0.3,true,user
+  1,<subject> participated in <fact>,0.7,mari,0.3,false,user-saw-and-talked-with-mari-2026-10-05
+  1,<subject> has <fact>,0.7,mari,0.3,false,mari-might-buy-apartment-in-tallinn
+  1,"",1,mari-might-buy-apartment-in-tallinn,0.3,true,mari
+  1,<fact> concerns <target>,0.7,mari-might-buy-apartment-in-tallinn,0.7,false,tallinn
+  1,<fact> concerns <target>,0.7,mari-might-buy-apartment-in-tallinn,0.7,false,apartment
+  1,<subject> has <fact>,0.7,mari,0.3,false,mari-might-sell-house-in-tartu
+  1,"",1,mari-might-sell-house-in-tartu,0.3,true,mari
+  1,<fact> concerns <target>,0.7,mari-might-sell-house-in-tartu,0.7,false,tartu
+  1,<fact> concerns <target>,0.7,mari-might-sell-house-in-tartu,0.7,false,house
+  1,<subject> is a <target>,1,apartment,1,false,housing
+  1,<subject> is a <target>,1,house,1,false,housing
+  1,<subject> is a <target>,1,tallinn,1,false,city
+  1,<subject> is a <target>,1,tartu,1,false,city
+  1,<subject> participated in <fact>,0.7,malfred,0.3,false,user-saw-and-talked-with-mari-2026-10-05
+  1,<subject> is friends with <target>,0.7,markus,0.7,false,mari
+  1,<subject> is a <target>,0.7,city,1,false,place
+  1,"",1,user-made-a-career-turn,1,true,user
+  1,"",1,user-got-fed-up-with-software-development,1,true,user
+  1,<fact> concerns <target>,1,user-got-fed-up-with-software-development,0.7,false,software-development
+  1,"",1,user-hates-everything-about-software-development,1,true,user
+  1,<fact> concerns <target>,1,user-hates-everything-about-software-development,0.7,false,software-development
+  1,"",1,user-sold-everything,1,true,user
+  1,"",1,user-moved-to-a-farm,1,true,user
+  1,<fact> concerns <target>,1,user-moved-to-a-farm,0.7,false,farm
+  1,<subject> has <fact>,0.7,user,0.7,false,user-made-a-career-turn
+  1,<subject> has <fact>,0.7,user,0.7,false,user-got-fed-up-with-software-development
+  1,<subject> has <fact>,0.7,user,0.7,false,user-hates-everything-about-software-development
+  1,<subject> has <fact>,0.7,user,0.7,false,user-sold-everything
+  1,<subject> has <fact>,0.7,user,0.7,false,user-moved-to-a-farm
+  1,<subject> is a <target>,1,farm,1,false,place
+  1,<subject> has <target>,0.7,mari,0.7,false,whiskers
+  1,<subject> is a <target>,0.7,whiskers,1,false,cat
+  1,<subject> is a <target>,0.7,cat,1,false,animal
+  1,<subject> has <fact>,0.7,whiskers,0.7,false,whiskers-is-very-playful
+  1,"",1,whiskers-is-very-playful,1,true,whiskers
+  1,<subject> has <fact>,0.7,whiskers,0.7,false,whiskers-loves-chasing-laser-pointers
+  1,"",1,whiskers-loves-chasing-laser-pointers,1,true,whiskers
+  1,<fact> concerns <target>,0.7,whiskers-loves-chasing-laser-pointers,0.7,false,laser-pointer
+  1,<subject> has <fact>,0.7,whiskers,0.7,false,whiskers-got-lost
+  1,"",1,whiskers-got-lost,1,true,whiskers
+  1,<subject> has <fact>,0.7,whiskers,0.7,false,stranger-found-and-returned-whiskers-to-mari
+  1,"",1,stranger-found-and-returned-whiskers-to-mari,1,true,whiskers
+  1,<subject> participated in <fact>,0.7,kind-stranger,0.7,false,stranger-found-and-returned-whiskers-to-mari
+  1,<subject> participated in <fact>,0.7,mari,0.7,false,stranger-found-and-returned-whiskers-to-mari
+  0.7,<subject> is a <target>,1,kind-stranger,1,false,person
+  0.7,<subject> is a <target>,1,laser-pointer,1,false,device
+  0.7,<subject> is a <target>,1,device,1,false,object
+  0.7,<subject> is a <target>,1,object,1,false,physical-object
+nodes[72]{body,date,id,type}:
+  "","",acme-corp,entity
+  "","",animal,entity
+  "","",animal-farm,entity
+  "","",apartment,entity
+  "","",artificial-intelligence,entity
+  "","",assistant,entity
+  "","",book,entity
+  "","",border-collie,entity
+  "","",cat,entity
+  "","",cheerleading-coach,entity
+  "","",city,entity
+  "","",coach,entity
+  "","",company,entity
+  "","",device,entity
+  "","",dog,entity
+  "","",english,entity
+  "","",estonian,entity
+  "","",farm,entity
+  "","",german,entity
+  "","",golang,entity
+  "","",gymnastics-club,entity
+  "","",house,entity
+  "","",housing,entity
+  "","",human,entity
+  "","",hüpe,entity
+  "","",kind-stranger,entity
+  "","",language,entity
+  "","",laser-pointer,entity
+  "","",llms,entity
+  "","",machine-learning,entity
+  "","",malfred,entity
+  Malfred is cute,"",malfred-is-cute,fact
+  "","",mari,entity
+  Mari said she might buy a new apartment in Tallinn,2026-10-05,mari-might-buy-apartment-in-tallinn,fact
+  Mari said she might sell her house in Tartu,2026-10-05,mari-might-sell-house-in-tartu,fact
+  "","",markus,entity
+  Markus is really into LLMs,"",markus-is-into-llms,fact
+  Markus is really into machine learning,"",markus-is-into-machine-learning,fact
+  Markus likes Golang,"",markus-likes-golang,fact
+  Markus likes Rust,"",markus-likes-rust,fact
+  Markus likes TypeScript,"",markus-likes-typescript,fact
+  "","",natural-language,entity
+  "","",object,entity
+  "","",occupation,entity
+  "","",organization,entity
+  "","",person,entity
+  "","",physical-object,entity
+  "","",place,entity
+  "","",profession,entity
+  "","",programming-language,entity
+  "","",russian,entity
+  "","",rust,entity
+  "","",software-developer,entity
+  "","",software-development,entity
+  A kind stranger found Whiskers and returned him to Mari,"",stranger-found-and-returned-whiskers-to-mari,fact
+  "","",tallinn,entity
+  "","",tartu,entity
+  "","",typescript,entity
+  "","",user,entity
+  Animal Farm is one of the user's favourite books,"",user-favourite-book-animal-farm,fact
+  The user got fed up with software development,"",user-got-fed-up-with-software-development,fact
+  The user hates everything about software development,"",user-hates-everything-about-software-development,fact
+  The user made a career turn,"",user-made-a-career-turn,fact
+  The user moved to a farm,"",user-moved-to-a-farm,fact
+  The user will read a bit of Animal Farm to the assistant,2026-10-06,user-reads-animal-farm-to-assistant,fact
+  "The user and Malfred saw Mari, and the user talked with her",2026-10-05,user-saw-and-talked-with-mari-2026-10-05,fact
+  The user sold everything,"",user-sold-everything,fact
+  The user went on a walk with Malfred,2026-10-05,walk-with-malfred-2026-10-05,fact
+  "","",whiskers,entity
+  Whiskers got lost,"",whiskers-got-lost,fact
+  Whiskers is very playful,"",whiskers-is-very-playful,fact
+  Whiskers loves to chase laser pointers,"",whiskers-loves-chasing-laser-pointers,fact
